@@ -2,6 +2,7 @@
     "name": "botect/botect-php",
     "description": "Botect server SDK for plain PHP with optional Laravel integration.",
     "type": "library",
+    "license": "MIT",
     "require": {
         "php": "^8.3",
         "ext-json": "*"
@@ -41,7 +42,8 @@
         "lint": "pint --format agent",
         "check": [
             "@test",
-            "@php tests/plain-php.php"
+            "@php tests/plain-php.php",
+            "@php tests/fpm.php"
         ]
     },
     "config": {

@@ -20,12 +20,13 @@ return [
     'timeout_ms' => 1000,
     'max_body_bytes' => 262144,
 
-    // Spool requires botect:flush in a background worker/cron. Never under public/.
-    'delivery' => env('BOTECT_DELIVERY', 'spool'),
+    // deferred needs no worker; spool and queue are explicit durable options.
+    'delivery' => env('BOTECT_DELIVERY', 'deferred'),
     'storage_path' => storage_path('app/private/botect'),
     'spool_capacity' => 1000,
+    // Optional overrides; null inherits Laravel's connection and its default queue.
     'queue_connection' => env('BOTECT_QUEUE_CONNECTION'),
-    'queue' => env('BOTECT_QUEUE', 'botect'),
+    'queue' => env('BOTECT_QUEUE'),
     'cache_store' => env('BOTECT_CACHE_STORE'),
 
     'tracking' => [

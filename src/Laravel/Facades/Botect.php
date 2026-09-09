@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Facade;
 
 /**
  * @method static \Botect\Verdict verdict(string $sessionToken, array $context = [])
+ * @method static \Botect\Verdict lookupVerdict(string $sessionToken, array $context = [])
  * @method static bool loggedIn(string $sessionToken)
  * @method static string collector(?\Botect\Page $page = null, ?string $cspNonce = null)
  * @method static ?string sessionToken(string $cookie)
