@@ -1,0 +1,53 @@
+{
+    "name": "botect/botect-php",
+    "description": "Botect server SDK for plain PHP with optional Laravel integration.",
+    "type": "library",
+    "require": {
+        "php": "^8.3",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "laravel/framework": "^12.0 || ^13.0",
+        "laravel/pint": "^1.27",
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "pestphp/pest": "^4.0"
+    },
+    "suggest": {
+        "ext-curl": "Required by the default HTTP transport.",
+        "laravel/framework": "^12.0 or ^13.0 enables the optional Laravel integration."
+    },
+    "conflict": {
+        "laravel/framework": "<12.0 || >=14.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Botect\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Botect\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Botect\\Laravel\\BotectServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "pest --compact",
+        "lint": "pint --format agent",
+        "check": [
+            "@test",
+            "@php tests/plain-php.php"
+        ]
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    }
+}

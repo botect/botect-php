@@ -1,0 +1,60 @@
+{
+    "session_token": "bt_AAcOFRwjKjE4P0ZNVFtiaXB3",
+    "site_key": "pk_fixture",
+    "events": [
+        {
+            "request_id": "fixture-1",
+            "type": "page",
+            "received_at": "2026-08-25T00:07:35.650Z",
+            "payload": {
+                "page_path_hash": "60ccb287befd2d39",
+                "page_path_shape": "/lyrics/{n}/adele-hello"
+            }
+        },
+        {
+            "request_id": "fixture-2",
+            "type": "snapshot",
+            "received_at": "2026-08-25T00:07:35.650Z",
+            "payload": {
+                "collector_version": "1.5.0",
+                "total_ms": 12000,
+                "visible_ms": 12000,
+                "visibility_changes": 1,
+                "mouse_moves": 24,
+                "pointer_moves": 25,
+                "pointer_types": [
+                    "mouse"
+                ],
+                "mouse_entropy": 0.181,
+                "scroll_events": 2,
+                "scroll_velocity": 387,
+                "scroll_max_depth_pct": 93,
+                "click_events": 1,
+                "key_events": 0,
+                "first_input_delay_ms": 6,
+                "time_to_first_input_ms": 7500,
+                "max_touch_points": 0,
+                "coarse_pointer": 0
+            }
+        },
+        {
+            "request_id": "fixture-3",
+            "type": "js_probe",
+            "received_at": "2026-08-25T00:07:35.650Z",
+            "payload": {
+                "collector_version": "1.5.0",
+                "js_passed": true,
+                "webdriver": false,
+                "headless": false,
+                "headless_ua": false,
+                "zero_viewport": false,
+                "missing_plugins": false,
+                "navigator_anomaly": true,
+                "languages": [
+                    "en-GB",
+                    "en"
+                ]
+            }
+        }
+    ]
+}
