@@ -4,7 +4,9 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
-Initial SDK implementation. No versioned package release has been tagged yet.
+## v0.1.0 — 2026-09-09
+
+Initial public SDK release.
 
 ### Changed
 
@@ -36,6 +38,6 @@ Initial SDK implementation. No versioned package release has been tagged yet.
 
 ### Availability
 
-- Installation currently uses the GitHub repository's `dev-main` branch; the package has not yet been published to Packagist.
+- The `v0.1.0` release is available from GitHub. Packagist publication is pending.
 - Server ingest, page tracking, and enforcement are disabled by default. Server-ingest features require a compatible Botect backend with those endpoints enabled.
 - Only spool and queue delivery require a worker. On non-FPM hosts, the default shutdown fallback may delay the response. The default plain PHP verdict cache is request-local; use immediate lookups or configure a persistent cache for evidence across requests.
