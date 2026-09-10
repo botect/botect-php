@@ -113,7 +113,7 @@ test('queue adapter refuses sync execution and dispatches real async jobs', func
     Bus::assertNothingDispatched();
     config(['botect.queue_connection' => 'redis', 'queue.connections.redis.driver' => 'redis']);
     expect($dispatcher->dispatch($delivery))->toBeTrue();
-    Bus::assertDispatched(DeliverJob::class, fn (DeliverJob $job): bool => $job->queue === 'botect' && $job->connection === 'redis');
+    Bus::assertDispatched(DeliverJob::class, fn (DeliverJob $job): bool => $job->queue === null && $job->connection === 'redis');
 });
 
 test('enforcement fails open on cache misses and enforces cached verdicts only', function (): void {
@@ -216,7 +216,7 @@ test('Laravel worker transport rejects oversized responses', function (): void {
 });
 
 test('Laravel worker processes queued writes and releases their unique lock', function (): void {
-    config(['botect.queue_connection' => 'database', 'queue.connections.database.driver' => 'database', 'queue.connections.database.connection' => 'testing', 'queue.connections.database.table' => 'jobs']);
+    config(['queue.default' => 'database', 'queue.connections.database.queue' => 'application-jobs', 'queue.connections.database.driver' => 'database', 'queue.connections.database.connection' => 'testing', 'queue.connections.database.table' => 'jobs']);
     Schema::create('jobs', function (Blueprint $table): void {
         $table->bigIncrements('id');
         $table->string('queue')->index();
@@ -230,9 +230,29 @@ test('Laravel worker processes queued writes and releases their unique lock', fu
     $dispatcher = $this->app->make(QueueDispatcher::class);
     $this->transport->result = new Response(200, '{"logged_in":true,"asserted_at":"2026-09-08T00:00:00Z"}');
     expect($dispatcher->dispatch($delivery))->toBeTrue()->and($this->transport->requests)->toBe([]);
-    $this->artisan('queue:work', ['connection' => 'database', '--queue' => 'botect', '--once' => true, '--sleep' => 0])->assertSuccessful();
+    expect(config('botect.queue_connection'))->toBeNull()->and(config('botect.queue'))->toBeNull()
+        ->and(DB::table('jobs')->sole()->queue)->toBe('application-jobs');
+    $this->artisan('queue:work', ['--once' => true, '--sleep' => 0])->assertSuccessful();
     expect($this->transport->requests)->toHaveCount(1);
     // After completion, the same unique key is available again.
     expect($dispatcher->dispatch($delivery))->toBeTrue()
         ->and(DB::table('jobs')->count())->toBe(1);
 });
+
+test('queue connection and queue name overrides work independently', function (?string $connection, ?string $queue, string $expectedConnection): void {
+    Bus::fake();
+    config([
+        'queue.default' => 'database',
+        'queue.connections.database.driver' => 'database',
+        'queue.connections.redis.driver' => 'redis',
+        'botect.queue_connection' => $connection,
+        'botect.queue' => $queue,
+    ]);
+    $dispatcher = $this->app->make(QueueDispatcher::class);
+    expect($dispatcher->dispatch(Delivery::make(Operation::AssertLoggedIn, 'sess_override')))->toBeTrue();
+    Bus::assertDispatched(DeliverJob::class, fn (DeliverJob $job): bool => $job->connection === $expectedConnection && $job->queue === $queue);
+})->with([
+    'connection only' => ['redis', null, 'redis'],
+    'queue only' => [null, 'custom-botect', 'database'],
+    'both' => ['redis', 'custom-botect', 'redis'],
+]);

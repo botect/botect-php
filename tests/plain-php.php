@@ -28,12 +28,16 @@ $transport = new class implements HttpTransport
     }
 };
 try {
-    $sdk = Botect::create(new Configuration('pk_test', 'sk_secret'), $directory, $transport);
+    $sdk = Botect::create(new Configuration('pk_test', 'sk_secret'), $directory, $transport, delivery: 'spool');
     if (! $sdk->loggedIn('sess_test') || $transport->calls !== 0 || ! str_contains($sdk->collector(), 'data-site-key="pk_test"')) {
         throw new RuntimeException('Plain PHP request behavior failed.');
     }
     if ($sdk->flush()->sent !== 1 || $transport->calls !== 1) {
         throw new RuntimeException('Plain PHP worker behavior failed.');
+    }
+    $simple = Botect::create(new Configuration('pk_simple', 'sk_secret'), transport: $transport);
+    if (! $simple->loggedIn('sess_simple') || $transport->calls !== 1 || $simple->sendPending()->sent !== 1 || $transport->calls !== 2) {
+        throw new RuntimeException('Default deferred delivery failed.');
     }
     foreach (get_declared_classes() as $class) {
         if (str_starts_with($class, 'Illuminate\\') || str_starts_with($class, 'Symfony\\')) {

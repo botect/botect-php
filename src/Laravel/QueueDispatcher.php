@@ -28,7 +28,7 @@ final readonly class QueueDispatcher implements Dispatcher
 
                 return false;
             }
-            $job = (new DeliverJob($delivery))->onConnection($connection)->onQueue($this->config->get('botect.queue', 'botect'));
+            $job = (new DeliverJob($delivery))->onConnection($connection)->onQueue($this->config->get('botect.queue') ?: null);
             $lock = new UniqueLock($this->cache);
             if (! $lock->acquire($job)) {
                 return true;

@@ -12,21 +12,71 @@ use Botect\Actions\RecordPageAction;
 use Botect\Contracts\Dispatcher;
 use Botect\Contracts\HttpTransport;
 use Botect\Contracts\VerdictCache;
+use Botect\Delivery\DeferredDispatcher;
 use Botect\Http\CurlTransport;
 use Botect\Storage\FileSpool;
 use Botect\Storage\FileVerdictCache;
+use Botect\Storage\MemoryVerdictCache;
 use Botect\Support\PageTokens;
+use InvalidArgumentException;
 use LogicException;
+use Throwable;
 
 final readonly class Botect
 {
     public function __construct(public Configuration $configuration, private Dispatcher $dispatcher, private VerdictCache $cache, private HttpTransport $transport) {}
 
-    public static function create(Configuration $configuration, string $storageDirectory, ?HttpTransport $transport = null): self
+    public static function create(Configuration $configuration, ?string $storageDirectory = null, ?HttpTransport $transport = null, string $delivery = 'deferred', ?VerdictCache $cache = null): self
     {
-        $storageDirectory = rtrim($storageDirectory, '/').'/'.$configuration->namespace();
+        if (! in_array($delivery, ['deferred', 'spool'], true)) {
+            throw new InvalidArgumentException('Use deferred or spool; Laravel queues are configured through the service provider.');
+        }
+        if ($delivery === 'spool' && ($storageDirectory === null || trim($storageDirectory) === '')) {
+            throw new InvalidArgumentException('File-spool delivery requires a private storage directory.');
+        }
+        if ($storageDirectory !== null && trim($storageDirectory) === '') {
+            throw new InvalidArgumentException('The storage directory must not be empty.');
+        }
+        $directory = $storageDirectory === null ? null : rtrim($storageDirectory, '/').'/'.$configuration->namespace();
+        $cache ??= $directory === null ? new MemoryVerdictCache : new FileVerdictCache($directory.'/cache');
+        $transport ??= new CurlTransport($configuration);
+        $action = new DeliverAction(new ApiClient($configuration, $transport), $cache, $configuration);
+        $dispatcher = $delivery === 'spool'
+            ? new FileSpool($directory.'/spool')
+            : new DeferredDispatcher($action->execute(...));
+        if ($dispatcher instanceof DeferredDispatcher) {
+            $dispatcher->registerShutdown();
+        }
 
-        return new self($configuration, new FileSpool($storageDirectory.'/spool'), new FileVerdictCache($storageDirectory.'/cache'), $transport ?? new CurlTransport($configuration));
+        return new self($configuration, $dispatcher, $cache, $transport);
+    }
+
+    /** Explicit immediate lookup; waits up to the transport timeout, without retries.
+     * @param  array<string, string>  $context
+     */
+    public function lookupVerdict(string $sessionToken, array $context = []): Verdict
+    {
+        try {
+            return (new ApiClient($this->configuration, $this->transport))->verdict($sessionToken, $context);
+        } catch (Throwable) {
+            return new Verdict;
+        }
+    }
+
+    /** Explicit lifecycle hook for long-running plain PHP hosts; call after sending the response. */
+    public function sendPending(): FlushResult
+    {
+        if (! $this->dispatcher instanceof DeferredDispatcher) {
+            throw new LogicException('sendPending() requires deferred delivery.');
+        }
+
+        return $this->dispatcher->drain();
+    }
+
+    /** Optional file-cache maintenance; run outside the visitor request path. */
+    public function pruneVerdictCache(): int
+    {
+        return $this->cache instanceof FileVerdictCache ? $this->cache->prune() : 0;
     }
 
     /** Returns cached evidence or allow, and schedules refresh without a Botect round trip.
@@ -37,7 +87,7 @@ final readonly class Botect
         return (new GetVerdictAction($this->configuration, $this->dispatcher, $this->cache))->execute($sessionToken, $context);
     }
 
-    /** True means queued locally, not that Botect has accepted the assertion. */
+    /** True means accepted by the configured dispatcher, not confirmed by Botect. */
     public function loggedIn(string $sessionToken): bool
     {
         return (new AssertLoggedInAction($this->configuration, $this->dispatcher, $this->cache))->execute($sessionToken);
@@ -84,12 +134,10 @@ final readonly class Botect
     public function flush(int $limit = 100): FlushResult
     {
         if (! $this->dispatcher instanceof FileSpool) {
-            throw new LogicException('Use the configured queue worker to process deliveries.');
+            throw new LogicException('flush() requires spool delivery; deferred sends automatically, and queues use their worker.');
         }
         $result = $this->dispatcher->flush($this->deliver(...), $limit);
-        if ($this->cache instanceof FileVerdictCache) {
-            $this->cache->prune();
-        }
+        $this->pruneVerdictCache();
 
         return $result;
     }

@@ -10,17 +10,18 @@ use Illuminate\Support\Facades\Schedule;
 // php artisan vendor:publish --tag=botect-config
 // In Blade: @botect (or @botect($cspNonce)).
 
-// Run the spool worker separately. For lower latency choose BOTECT_DELIVERY=queue
-// and a real async connection, then run queue:work --queue=botect.
-Schedule::command('botect:flush --limit=100')->everyMinute()->withoutOverlapping()->runInBackground();
+// Default deferred delivery needs no worker. Optionally select queue delivery
+// with a real async connection, or spool delivery with this scheduled worker:
+if (config('botect.delivery') === 'spool') {
+    Schedule::command('botect:flush --limit=100')->everyMinute()->withoutOverlapping()->runInBackground();
+}
 
 // After successful login: Botect::loggedIn($sessionToken).
 // Current collector tokens must be explicitly passed to the application by the browser.
 // Once server ingest is deployed, tracking sets a signed HttpOnly server cookie instead.
 // Resolve it with Botect::sessionToken(request()->cookie(config('botect.cookie_name'), '')).
 
-// Server page tracking / proxy are intentionally gated until both backend subtasks ship:
-// https://app.clickup.com/t/86e35ej57 (server ingest), https://app.clickup.com/t/86e35ej5b (correlation).
+// Server page tracking / proxy require a backend with server ingest enabled.
 // Set server_ingest_enabled and tracking.enabled only against a compatible backend.
 // Tracking personalizes HTML: bypass full-page/CDN caches, and provide a csp_nonce request
 // attribute or render @botect($nonce) yourself if the application uses a strict CSP.

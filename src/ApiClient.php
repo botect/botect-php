@@ -7,17 +7,23 @@ namespace Botect;
 use Botect\Contracts\HttpTransport;
 use Botect\Exceptions\DeliveryException;
 use Botect\Support\SessionToken;
+use InvalidArgumentException;
 use Throwable;
 
 final readonly class ApiClient
 {
     public function __construct(private Configuration $configuration, private HttpTransport $transport) {}
 
-    /** Blocking worker API. Use Botect::verdict() in the customer request path.
+    /** Blocking HTTP API, used by delivery workers and explicit immediate lookups.
      * @param  array<string, string>  $context
      */
     public function verdict(string $sessionToken, array $context = []): Verdict
     {
+        foreach ($context as $key => $value) {
+            if (! in_array($key, ['path', 'ip', 'country', 'ua'], true) || ! is_string($value) || strlen($value) > 2048) {
+                throw new InvalidArgumentException('Invalid verdict context.');
+            }
+        }
         $path = '/sessions/'.SessionToken::validate($sessionToken).'/verdict';
         $query = http_build_query($context, '', '&', PHP_QUERY_RFC3986);
         $data = $this->request('GET', $path.($query === '' ? '' : '?'.$query));
