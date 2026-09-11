@@ -4,6 +4,10 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
+### Changed
+
+- `DeliveryException` now keeps the underlying transport or decoding error as its previous exception and appends that error's message, with session tokens redacted, to its own. A connect timeout, a read timeout, a DNS failure and a malformed response used to all report as "Botect transport or response failure."; error trackers now show which one it was.
+
 ## v0.1.2 — 2026-09-11
 
 ### Added

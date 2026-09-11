@@ -7,6 +7,7 @@ namespace Botect\Http;
 use Botect\Configuration;
 use Botect\Contracts\TimeoutAwareTransport;
 use Botect\Exceptions\DeliveryException;
+use RuntimeException;
 
 final readonly class CurlTransport implements TimeoutAwareTransport
 {
@@ -55,7 +56,9 @@ final readonly class CurlTransport implements TimeoutAwareTransport
                 curl_setopt($handle, CURLOPT_POSTFIELDS, $body);
             }
             if (curl_exec($handle) === false) {
-                throw new DeliveryException(true);
+                $error = curl_error($handle);
+
+                throw new DeliveryException(true, previous: new RuntimeException($error !== '' ? $error : 'cURL error '.curl_errno($handle)));
             }
 
             return new Response((int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE), $responseBody);

@@ -57,8 +57,8 @@ final readonly class LaravelHttpTransport implements TimeoutAwareTransport
             return new Response($response->status(), $contents);
         } catch (DeliveryException $exception) {
             throw $exception;
-        } catch (Throwable) {
-            throw new DeliveryException(true);
+        } catch (Throwable $exception) {
+            throw new DeliveryException(true, previous: $exception);
         }
     }
 }

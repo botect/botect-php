@@ -25,6 +25,7 @@ use Illuminate\Contracts\Encryption\Encrypter;
 use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Cookie\CookieValuePrefix;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Blade;
@@ -255,6 +256,22 @@ test('facade fake captures deliveries without real network or queue work', funct
     expect(\Botect\Laravel\Facades\Botect::loggedIn('sess_test'))->toBeTrue()
         ->and($fake->forOperation(Operation::AssertLoggedIn))->toHaveCount(1)
         ->and($this->transport->requests)->toBe([]);
+});
+
+test('Laravel transport failures name their cause', function (): void {
+    Http::fake(['*' => Http::failedConnection()]);
+    $this->app->instance(HttpTransport::class, $this->app->make(LaravelHttpTransport::class));
+    $sdk = $this->app->make(Botect::class);
+    $sdk->loggedIn('sess_cause');
+    try {
+        $sdk->deliver($this->dispatcher->deliveries[0]);
+        $this->fail('The delivery should have failed.');
+    } catch (DeliveryException $exception) {
+        expect($exception->retryable)->toBeTrue()
+            ->and($exception->getPrevious())->toBeInstanceOf(ConnectionException::class)
+            ->and($exception->getMessage())->toContain('Cause: ')
+            ->and($exception->getMessage())->not->toContain('sess_cause');
+    }
 });
 
 test('Laravel transport respects Http fakes and keeps login bodies empty', function (): void {
