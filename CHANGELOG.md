@@ -4,6 +4,8 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
+## v0.1.1 — 2026-09-10
+
 ### Added
 
 - `forwardEvents()` accepts the visitor's signed session cookie as a fourth argument and throws `SessionMismatchException` when the page token names another session. The Laravel ingest endpoint reads the cookie (encrypted or plain), answers HTTP 409 instead of attributing the batch, and logs one warning per page token with the page id and referring path. Missing or unverifiable cookies are accepted as before. Requires a collector that sends same-origin credentials; older cached collectors keep the previous behavior.
