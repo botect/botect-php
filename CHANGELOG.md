@@ -4,6 +4,10 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
+### Fixed
+
+- Server tracking now stays registered when another package changes the HTTP kernel's middleware after the SDK boots. Laravel Sanctum does this during its own boot, which previously removed tracking from the `web` group without an error: pages received no collector, no session cookie, and no server page observations. Applications that added `TrackPage` to their own `web` group as a workaround can keep it; the middleware is not registered twice.
+
 ## v0.1.0 — 2026-09-09
 
 Initial public SDK release.

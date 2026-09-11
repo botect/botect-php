@@ -14,11 +14,13 @@ use Botect\Laravel\Contracts\VerdictHandler;
 use Botect\Laravel\Http\IngestController;
 use Botect\Laravel\Jobs\DeliverJob;
 use Botect\Laravel\LaravelHttpTransport;
+use Botect\Laravel\Middleware\TrackPage;
 use Botect\Laravel\QueueDispatcher;
 use Botect\Operation;
 use Botect\Testing\FakeDispatcher;
 use Botect\Tests\FakeTransport;
 use Botect\Verdict;
+use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
@@ -192,6 +194,34 @@ test('provider registers the gated ingest route outside the web middleware group
     $route = $router->getRoutes()->getByName('botect.ingest');
     expect($route->uri())->toBe('custom/ingest')->and($route->gatherMiddleware())->not->toContain('web');
     $this->postJson('/custom/ingest?page_token=bad', [])->assertUnprocessable();
+});
+
+test('tracking survives a later provider re-syncing the HTTP kernel onto the router', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true]);
+    $router = $this->app->make(Router::class);
+    (new BotectServiceProvider($this->app))->boot($router);
+    // Sanctum does exactly this from its own boot(), after ours in discovery
+    // order. Every Kernel mutator that touches groups or priority copies the
+    // Kernel's groups over the Router's, discarding anything pushed onto the
+    // Router alone — silently, with no collector and no cookie.
+    $this->app->make(HttpKernel::class)->prependToMiddlewarePriority('Tests\\LaterPackageMiddleware');
+    expect($router->getMiddlewareGroups()['web'])->toContain(TrackPage::class);
+    Route::get('/tracked-web-page', fn () => response('<html><head></head><body>ok</body></html>'))->middleware('web');
+    $this->get('/tracked-web-page')->assertOk()->assertSee('data-botect-sdk', false);
+});
+
+test('tracking is registered once when the application already lists it in the web group', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true]);
+    $kernel = $this->app->make(HttpKernel::class);
+    $kernel->appendMiddlewareToGroup('web', TrackPage::class);
+    (new BotectServiceProvider($this->app))->boot($this->app->make(Router::class));
+    expect(array_count_values($kernel->getMiddlewareGroups()['web'])[TrackPage::class])->toBe(1);
+});
+
+test('an application without a web middleware group still boots with tracking enabled', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true]);
+    $this->app->make(HttpKernel::class)->setMiddlewareGroups(['api' => []]);
+    expect(fn () => (new BotectServiceProvider($this->app))->boot($this->app->make(Router::class)))->not->toThrow(Throwable::class);
 });
 
 test('encrypted Laravel web cookies survive the browser round trip', function (): void {
