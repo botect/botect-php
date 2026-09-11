@@ -29,8 +29,8 @@ final readonly class ApiClient
         $data = $this->request('GET', $path.($query === '' ? '' : '?'.$query));
         try {
             return Verdict::fromArray($data);
-        } catch (Throwable) {
-            throw new DeliveryException(true);
+        } catch (Throwable $exception) {
+            throw new DeliveryException(true, previous: $exception);
         }
     }
 
@@ -71,8 +71,8 @@ final readonly class ApiClient
             $response = $this->transport->send($method, rtrim($this->configuration->apiUrl, '/').$path, $headers, $payload === null ? null : json_encode($payload, JSON_THROW_ON_ERROR));
         } catch (DeliveryException $exception) {
             throw $exception;
-        } catch (Throwable) {
-            throw new DeliveryException(true);
+        } catch (Throwable $exception) {
+            throw new DeliveryException(true, previous: $exception);
         }
         if ($response->status < 200 || $response->status >= 300) {
             $retryable = $response->status >= 500 || in_array($response->status, [408, 425, 429], true)
@@ -89,8 +89,8 @@ final readonly class ApiClient
             }
 
             return $data;
-        } catch (Throwable) {
-            throw new DeliveryException(true);
+        } catch (Throwable $exception) {
+            throw new DeliveryException(true, previous: $exception);
         }
     }
 }
