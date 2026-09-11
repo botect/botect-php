@@ -289,7 +289,7 @@ See [Logged-in visitors](https://docs.botect.ai/logged-in-visitors) for how asse
 
 Server tracking records page observations and routes browser events through an endpoint on your application. Enable it only when your Botect backend supports and has enabled the server-ingest endpoints. It is disabled by default.
 
-**Tracked pages must not be cached.** Every tracked response carries a page token and a session cookie minted for one visitor, and is sent with `Cache-Control: private, no-store`. A CDN or full-page cache that stores a tracked response anyway serves that visitor's token to everyone who receives the cached copy: their browser events are attributed to the first visitor's session, and once the token expires (15 minutes) they are rejected. Neither failure raises an error. Exclude cached pages with `tracking.except`, or track only specific routes with `tracking.scope` (below).
+**Tracked pages must not be cached.** Every tracked response carries a page token and a session cookie minted for one visitor, and is sent with `Cache-Control: private, no-store`. A CDN or full-page cache that stores a tracked response anyway serves that visitor's token to everyone who receives the cached copy: their browser events are attributed to the first visitor's session, and once the token expires (15 minutes) they are rejected. The ingest endpoint catches the second case when it can: a batch whose page token was minted for a different visitor than the one sending it is rejected with HTTP 409 instead of being attributed, and one warning per page token is logged with the page id and path, so a cached tracked page shows up in your log rather than as another visitor's session. The check uses the visitor's own `botect_server_session` cookie, which the current collector sends to same-origin endpoints; browsers still holding an older cached collector send none and are accepted on the token alone. Exclude cached pages with `tracking.except`, or track only specific routes with `tracking.scope` (below).
 
 For Laravel, set:
 
@@ -343,7 +343,7 @@ $sessionToken = Botect::sessionToken(
 
 An absent or invalid cookie returns `null`; check for a token before calling `loggedIn()` or `verdict()`.
 
-Plain PHP applications can build the same integration using `page()`, `sessionCookie()`, `recordPage()`, `collector($page)`, and `forwardEvents()`. Set `serverIngestEnabled: true` in `Configuration`, and implement the local POST handler at `ingestPath` to pass the signed page token and decoded collector body to `forwardEvents()`. The plain PHP core does not register routes or set cookies for you.
+Plain PHP applications can build the same integration using `page()`, `sessionCookie()`, `recordPage()`, `collector($page)`, and `forwardEvents()`. Set `serverIngestEnabled: true` in `Configuration`, and implement the local POST handler at `ingestPath` to pass the signed page token and decoded collector body to `forwardEvents()`. Pass the raw value of the visitor's session cookie as its fourth argument and answer `Botect\Exceptions\SessionMismatchException` (an `InvalidArgumentException`) with HTTP 409; a missing or unverifiable cookie is ignored. The plain PHP core does not register routes or set cookies for you.
 
 ## Optional Laravel enforcement
 

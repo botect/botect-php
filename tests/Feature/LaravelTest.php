@@ -18,9 +18,12 @@ use Botect\Laravel\Middleware\TrackPage;
 use Botect\Laravel\QueueDispatcher;
 use Botect\Operation;
 use Botect\Testing\FakeDispatcher;
+use Botect\Tests\FakeLogger;
 use Botect\Tests\FakeTransport;
 use Botect\Verdict;
+use Illuminate\Contracts\Encryption\Encrypter;
 use Illuminate\Contracts\Http\Kernel as HttpKernel;
+use Illuminate\Cookie\CookieValuePrefix;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
@@ -30,6 +33,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
 
 beforeEach(function (): void {
@@ -97,6 +101,93 @@ test('proxy validates tokens and JSON before queuing and rejects foreign origins
     $this->postJson('/collect?page_token='.urlencode($page->token), $body, ['Origin' => 'https://evil.example'])->assertForbidden();
     $this->postJson('/collect?page_token='.urlencode($page->token), ['secret' => 'value'])->assertUnprocessable();
     expect($this->dispatcher->deliveries)->toHaveCount(1)->and($this->transport->requests)->toBe([]);
+});
+
+test('proxy rejects a cached page token sent with another visitor\'s cookie and warns once per page', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true]);
+    $this->app->instance(LoggerInterface::class, $logger = new FakeLogger);
+    Route::get('/cookie-page', fn () => response('<html><head></head><body>ok</body></html>'))->middleware(['web', 'botect.track']);
+    Route::post('/collect', IngestController::class);
+    $body = ['events' => [['request_id' => 'e1', 'type' => 'js_probe', 'received_at' => '2026-09-08T00:00:00Z', 'payload' => ['js_passed' => true]]]];
+    // A tracked visit as seen by the browser: the token in the page and the encrypted cookie.
+    $visit = function (?string $cookie = null): array {
+        $this->unencryptedCookies = $cookie === null ? [] : ['botect_server_session' => $cookie];
+        $response = $this->get('/cookie-page')->assertOk();
+        preg_match('/page_token=([^"&]+)/', $response->getContent(), $match);
+        $jar = collect($response->headers->getCookies())->first(fn ($c): bool => $c->getName() === 'botect_server_session');
+
+        return ['token' => urldecode($match[1]), 'cookie' => $jar->getValue()];
+    };
+    $post = function (string $token, ?string $cookie, array $headers = []) use ($body) {
+        $this->unencryptedCookies = $cookie === null ? [] : ['botect_server_session' => $cookie];
+
+        // JSON test requests carry no cookies unless credentials are opted in.
+        return $this->withCredentials()->postJson('/collect?page_token='.urlencode($token), $body, $headers);
+    };
+    $a = $visit();
+    $b = $visit();
+
+    // The cached-page shape: A's token in the page, B's cookie in the browser.
+    $rejected = $post($a['token'], $b['cookie'], ['Referer' => 'http://localhost/cookie-page?secret=x'])
+        ->assertStatus(409)->assertJson(['error' => 'Page token belongs to another session']);
+    expect($rejected->headers->get('Cache-Control'))->toContain('no-store')
+        ->and($this->dispatcher->forOperation(Operation::ForwardEvents))->toBe([])
+        ->and($logger->records)->toHaveCount(1)
+        ->and($logger->records[0][0])->toBe('warning')
+        ->and($logger->records[0][2]['page_id'])->toMatch('/^[a-f0-9]{32}$/')
+        ->and($logger->records[0][2]['path'])->toBe('/cookie-page')
+        ->and(json_encode($logger->records[0]))->not->toContain('sess_', 'secret');
+    $post($a['token'], $b['cookie'])->assertStatus(409);
+    expect($logger->records)->toHaveCount(1);
+
+    // The visitor the token was minted for is still accepted.
+    $post($a['token'], $a['cookie'])->assertAccepted();
+    $forwarded = $this->dispatcher->forOperation(Operation::ForwardEvents);
+    expect($forwarded)->toHaveCount(1)
+        ->and($forwarded[0]->sessionToken)->toBe($this->dispatcher->forOperation(Operation::RecordPage)[0]->payload['session_token']);
+
+    // A new token for the same session is a new page: the throttle is per token.
+    $again = $visit($a['cookie']);
+    $post($again['token'], $b['cookie'])->assertStatus(409);
+    expect($logger->records)->toHaveCount(2);
+});
+
+test('proxy fails open on absent, tampered, or undecryptable cookies', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true]);
+    $this->app->instance(LoggerInterface::class, $logger = new FakeLogger);
+    Route::get('/cookie-page', fn () => response('<html><head></head><body>ok</body></html>'))->middleware(['web', 'botect.track']);
+    Route::post('/collect', IngestController::class);
+    $body = ['events' => [['request_id' => 'e1', 'type' => 'js_probe', 'received_at' => '2026-09-08T00:00:00Z', 'payload' => ['js_passed' => true]]]];
+    $page = $this->get('/cookie-page')->assertOk();
+    preg_match('/page_token=([^"&]+)/', $page->getContent(), $match);
+    $token = urldecode($match[1]);
+    $other = collect($this->get('/cookie-page')->headers->getCookies())->first(fn ($c): bool => $c->getName() === 'botect_server_session')->getValue();
+    $encrypter = $this->app->make(Encrypter::class);
+    $plainOther = CookieValuePrefix::remove($encrypter->decrypt($other, false));
+    // A real cookie value encrypted for a DIFFERENT cookie name fails the prefix check.
+    $wrongName = $encrypter->encrypt(CookieValuePrefix::create('other', $encrypter->getKey()).$plainOther, false);
+    // Flip a byte inside the ciphertext; appending past the base64 padding would decode unchanged.
+    $tampered = substr_replace($other, $other[20] === 'x' ? 'y' : 'x', 20, 1);
+    foreach ([null, 'garbage', $tampered, $wrongName] as $cookie) {
+        $this->unencryptedCookies = $cookie === null ? [] : ['botect_server_session' => $cookie];
+        $this->withCredentials()->postJson('/collect?page_token='.urlencode($token), $body)->assertAccepted();
+    }
+    expect($this->dispatcher->forOperation(Operation::ForwardEvents))->toHaveCount(4)->and($logger->records)->toBe([]);
+});
+
+test('proxy compares a plain signed cookie when the application does not encrypt it', function (): void {
+    // Global EncryptCookies, an excepted cookie, or no cookie encryption at all
+    // hand the endpoint the plain signed value.
+    config(['botect.server_ingest_enabled' => true]);
+    $this->app->instance(LoggerInterface::class, $logger = new FakeLogger);
+    Route::post('/collect', IngestController::class);
+    $sdk = $this->app->make(Botect::class);
+    $a = $sdk->page();
+    $b = $sdk->page();
+    $body = ['events' => [['request_id' => 'e1', 'type' => 'js_probe', 'received_at' => '2026-09-08T00:00:00Z', 'payload' => ['js_passed' => true]]]];
+    $this->withCredentials()->withUnencryptedCookie('botect_server_session', $sdk->sessionCookie($b))->postJson('/collect?page_token='.urlencode($a->token), $body)->assertStatus(409);
+    $this->withCredentials()->withUnencryptedCookie('botect_server_session', $sdk->sessionCookie($a))->postJson('/collect?page_token='.urlencode($a->token), $body)->assertAccepted();
+    expect($this->dispatcher->forOperation(Operation::ForwardEvents))->toHaveCount(1)->and($logger->records)->toHaveCount(1);
 });
 
 test('proxy returns unavailable rather than claiming an unqueued batch succeeded', function (): void {

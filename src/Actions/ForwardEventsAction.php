@@ -7,6 +7,7 @@ namespace Botect\Actions;
 use Botect\Configuration;
 use Botect\Contracts\Dispatcher;
 use Botect\Delivery;
+use Botect\Exceptions\SessionMismatchException;
 use Botect\Operation;
 use Botect\Support\EventBatch;
 use Botect\Support\PageTokens;
@@ -17,7 +18,7 @@ final readonly class ForwardEventsAction
     public function __construct(private Configuration $configuration, private Dispatcher $dispatcher, private PageTokens $tokens) {}
 
     /** @param array<string, mixed> $body */
-    public function execute(string $pageToken, array $body, ?string $idempotencyKey = null): bool
+    public function execute(string $pageToken, array $body, ?string $idempotencyKey = null, ?string $sessionCookie = null): bool
     {
         if (! $this->configuration->serverIngestEnabled) {
             return false;
@@ -25,6 +26,15 @@ final readonly class ForwardEventsAction
         $page = $this->tokens->verify($pageToken);
         if ($page === null || ($body['site_key'] ?? $this->configuration->siteKey) !== $this->configuration->siteKey) {
             throw new InvalidArgumentException('Invalid page token or site key.');
+        }
+        // The visitor's own cookie outranks the token in the page: a cached page
+        // carries the first visitor's token to everyone. An absent or
+        // unverifiable cookie proves nothing and must not block the batch.
+        if ($sessionCookie !== null) {
+            $visitorSession = $this->tokens->readCookie($sessionCookie);
+            if ($visitorSession !== null && ! hash_equals($page->sessionToken, $visitorSession)) {
+                throw new SessionMismatchException($page->id);
+            }
         }
         if (strlen(json_encode($body, JSON_THROW_ON_ERROR)) > $this->configuration->maxBodyBytes) {
             throw new InvalidArgumentException('Event batch too large.');

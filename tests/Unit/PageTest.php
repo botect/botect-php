@@ -4,6 +4,7 @@ declare(strict_types=1);
 use Botect\Botect;
 use Botect\Collector;
 use Botect\Configuration;
+use Botect\Exceptions\SessionMismatchException;
 use Botect\Support\PageTokens;
 use Botect\Testing\ArrayVerdictCache;
 use Botect\Testing\FakeDispatcher;
@@ -66,6 +67,27 @@ test('proxy pins session identity to signed page and preserves batch idempotency
         ->and($this->dispatcher->deliveries[0]->id)->toBe($this->dispatcher->deliveries[1]->id)
         ->and($this->dispatcher->deliveries[2]->id)->not->toBe($this->dispatcher->deliveries[0]->id)
         ->and(json_encode($this->dispatcher->deliveries[0]->payload))->not->toContain('attacker_chosen');
+});
+
+test('proxy rejects a page token presented with a different visitor\'s session cookie', function (): void {
+    $a = $this->sdk->page();
+    $b = $this->sdk->page();
+    $body = ['events' => [['request_id' => 'e1', 'type' => 'js_probe', 'received_at' => '2026-09-08T00:00:00Z', 'payload' => ['js_passed' => true]]]];
+    expect($this->sdk->forwardEvents($a->token, $body, null, $this->sdk->sessionCookie($a)))->toBeTrue();
+    try {
+        $this->sdk->forwardEvents($a->token, $body, null, $this->sdk->sessionCookie($b));
+        $this->fail('A cached page token presented by another visitor must be rejected.');
+    } catch (SessionMismatchException $exception) {
+        expect($exception)->toBeInstanceOf(InvalidArgumentException::class)
+            ->and($exception->pageId)->toBe($a->id)
+            ->and($exception->getMessage())->not->toContain('sess_');
+    }
+    // Absent, unsigned, or tampered cookies identify nobody and must not block the batch.
+    foreach ([null, 'garbage', $this->sdk->sessionCookie($b).'x'] as $cookie) {
+        expect($this->sdk->forwardEvents($a->token, $body, null, $cookie))->toBeTrue();
+    }
+    $sessions = array_unique(array_map(fn ($delivery) => $delivery->sessionToken, $this->dispatcher->deliveries));
+    expect($this->dispatcher->deliveries)->toHaveCount(4)->and(array_values($sessions))->toBe([$a->sessionToken]);
 });
 
 test('rejects PII and malformed event shapes before they enter the spool', function (array $payload): void {
