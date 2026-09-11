@@ -4,6 +4,14 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
+### Added
+
+- `tracking.scope` in the Laravel configuration. `web` (the default) adds tracking to every route in the `web` middleware group, as before; `manual` tracks only routes that carry the `botect.track` middleware, so a site that caches most of its pages can track just the routes that are never cached.
+
+### Changed
+
+- The README now states at the start of the server-tracking section that tracked pages must not be served from a CDN or full-page cache, and what goes wrong when they are.
+
 ### Fixed
 
 - Server tracking now stays registered when another package changes the HTTP kernel's middleware after the SDK boots. Laravel Sanctum does this during its own boot, which previously removed tracking from the `web` group without an error: pages received no collector, no session cookie, and no server page observations. Applications that added `TrackPage` to their own `web` group as a workaround can keep it; the middleware is not registered twice.

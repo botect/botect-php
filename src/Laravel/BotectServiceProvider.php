@@ -79,7 +79,13 @@ final class BotectServiceProvider extends ServiceProvider
         $router->aliasMiddleware('botect.track', TrackPage::class);
         $router->aliasMiddleware('botect.enforce', EnforceVerdict::class);
         if (config('botect.tracking.enabled') && config('botect.server_ingest_enabled')) {
-            $this->trackWebRoutes($router);
+            // Published configurations from before `scope` existed replace the
+            // whole `tracking` array, so an absent key means the old behaviour.
+            match (config('botect.tracking.scope', 'web')) {
+                'web' => $this->trackWebRoutes($router),
+                'manual' => null,
+                default => throw new InvalidArgumentException('Unknown Botect tracking scope.'),
+            };
         }
         if (! $this->app->routesAreCached() && config('botect.server_ingest_enabled') && config('botect.site_key')) {
             $path = $this->app->make(Configuration::class)->ingestPath;

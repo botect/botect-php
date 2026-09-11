@@ -29,8 +29,14 @@ return [
     'queue' => env('BOTECT_QUEUE'),
     'cache_store' => env('BOTECT_CACHE_STORE'),
 
+    // Tracked responses carry a per-visitor page token and session cookie.
+    // Never serve them from a CDN or full-page cache: a cached copy hands one
+    // visitor's session to everyone who receives it. See the README.
     'tracking' => [
         'enabled' => false,
+        // 'web' tracks every route in the web middleware group; 'manual' tracks
+        // only routes that carry the botect.track middleware.
+        'scope' => 'web',
         'inject_collector' => true,
         'except' => [],
     ],

@@ -224,6 +224,40 @@ test('an application without a web middleware group still boots with tracking en
     expect(fn () => (new BotectServiceProvider($this->app))->boot($this->app->make(Router::class)))->not->toThrow(Throwable::class);
 });
 
+test('manual scope leaves the web group alone and tracks only routes carrying botect.track', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true, 'botect.tracking.scope' => 'manual']);
+    // Resolve the kernel first, as a real request does: the Router only
+    // receives its groups when the kernel is constructed.
+    $kernel = $this->app->make(HttpKernel::class);
+    $router = $this->app->make(Router::class);
+    (new BotectServiceProvider($this->app))->boot($router);
+    expect($kernel->getMiddlewareGroups()['web'])->not->toContain(TrackPage::class)
+        ->and($router->getMiddlewareGroups()['web'])->not->toContain(TrackPage::class);
+    $html = '<html><head></head><body>ok</body></html>';
+    Route::get('/cached-page', fn () => response($html))->middleware('web');
+    Route::get('/tracked-page', fn () => response($html))->middleware(['web', 'botect.track']);
+    $untracked = $this->get('/cached-page')->assertOk()->assertDontSee('data-botect-sdk', false);
+    expect(collect($untracked->headers->getCookies())->map->getName()->all())->not->toContain('botect_server_session');
+    $this->get('/tracked-page')->assertOk()->assertSee('data-botect-sdk', false);
+    expect($this->dispatcher->forOperation(Operation::RecordPage))->toHaveCount(1);
+});
+
+test('an unknown tracking scope is refused when the provider boots', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true, 'botect.tracking.scope' => 'everywhere']);
+    expect(fn () => (new BotectServiceProvider($this->app))->boot($this->app->make(Router::class)))
+        ->toThrow(InvalidArgumentException::class, 'Unknown Botect tracking scope.');
+});
+
+test('a published configuration without tracking.scope keeps tracking on the web group', function (): void {
+    // A config/botect.php published before the option existed replaces the
+    // whole `tracking` array, so the key is absent rather than defaulted.
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking' => ['enabled' => true, 'inject_collector' => true, 'except' => []]]);
+    expect(config('botect.tracking.scope'))->toBeNull();
+    $router = $this->app->make(Router::class);
+    (new BotectServiceProvider($this->app))->boot($router);
+    expect($router->getMiddlewareGroups()['web'])->toContain(TrackPage::class);
+});
+
 test('encrypted Laravel web cookies survive the browser round trip', function (): void {
     config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true]);
     Route::get('/cookie-page', fn () => response('<html><head></head><body>ok</body></html>'))->middleware(['web', 'botect.track']);
