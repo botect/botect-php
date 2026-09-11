@@ -349,6 +349,16 @@ test('a published configuration without tracking.scope keeps tracking on the web
     expect($router->getMiddlewareGroups()['web'])->toContain(TrackPage::class);
 });
 
+test('Laravel maps lookup and delivery timeouts separately and jobs use the delivery limits', function (): void {
+    config(['botect.connect_timeout_ms' => 300, 'botect.timeout_ms' => 900, 'botect.delivery_connect_timeout_ms' => 1500, 'botect.delivery_timeout_ms' => 6000]);
+    $configuration = $this->app->make(Configuration::class);
+    expect([$configuration->connectTimeoutMs, $configuration->timeoutMs, $configuration->deliveryConnectTimeoutMs, $configuration->deliveryTimeoutMs])->toBe([300, 900, 1500, 6000]);
+    $this->transport->result = new Response(200, '{"logged_in":true,"asserted_at":"2026-09-08T00:00:00Z"}');
+    (new DeliverJob(Delivery::make(Operation::AssertLoggedIn, 'sess_timeouts')))->handle($this->app->make(Botect::class));
+    expect($this->transport->timeoutCalls)->toBe([[1500, 6000]])->and($this->transport->requests)->toHaveCount(1);
+    expect($this->app->make(LaravelHttpTransport::class)->withTimeouts(1500, 6000))->toBeInstanceOf(LaravelHttpTransport::class);
+});
+
 test('encrypted Laravel web cookies survive the browser round trip', function (): void {
     config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true]);
     Route::get('/cookie-page', fn () => response('<html><head></head><body>ok</body></html>'))->middleware(['web', 'botect.track']);

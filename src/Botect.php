@@ -11,6 +11,7 @@ use Botect\Actions\GetVerdictAction;
 use Botect\Actions\RecordPageAction;
 use Botect\Contracts\Dispatcher;
 use Botect\Contracts\HttpTransport;
+use Botect\Contracts\TimeoutAwareTransport;
 use Botect\Contracts\VerdictCache;
 use Botect\Delivery\DeferredDispatcher;
 use Botect\Http\CurlTransport;
@@ -51,7 +52,7 @@ final readonly class Botect
         return new self($configuration, $dispatcher, $cache, $transport);
     }
 
-    /** Explicit immediate lookup; waits up to the transport timeout, without retries.
+    /** Explicit immediate lookup; waits up to the lookup timeout, without retries.
      * @param  array<string, string>  $context
      */
     public function lookupVerdict(string $sessionToken, array $context = []): Verdict
@@ -134,9 +135,19 @@ final readonly class Botect
         return (new Collector($this->configuration))->render($page, $cspNonce);
     }
 
+    /**
+     * Send one queued or spooled delivery. Runs in a worker where nothing waits
+     * on it, so it uses the delivery timeouts rather than the lookup timeouts;
+     * deferred delivery keeps the lookup limits because it holds a PHP-FPM
+     * worker after the response. A transport that cannot be re-timed keeps the
+     * limits it was built with.
+     */
     public function deliver(Delivery $delivery): void
     {
-        (new DeliverAction(new ApiClient($this->configuration, $this->transport), $this->cache, $this->configuration))->execute($delivery);
+        $transport = $this->transport instanceof TimeoutAwareTransport
+            ? $this->transport->withTimeouts($this->configuration->deliveryConnectTimeoutMs, $this->configuration->deliveryTimeoutMs)
+            : $this->transport;
+        (new DeliverAction(new ApiClient($this->configuration, $transport), $this->cache, $this->configuration))->execute($delivery);
     }
 
     /** Explicit blocking worker entry point, for cron / CLI only. */

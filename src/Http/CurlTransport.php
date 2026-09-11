@@ -5,12 +5,17 @@ declare(strict_types=1);
 namespace Botect\Http;
 
 use Botect\Configuration;
-use Botect\Contracts\HttpTransport;
+use Botect\Contracts\TimeoutAwareTransport;
 use Botect\Exceptions\DeliveryException;
 
-final readonly class CurlTransport implements HttpTransport
+final readonly class CurlTransport implements TimeoutAwareTransport
 {
     public function __construct(private Configuration $configuration) {}
+
+    public function withTimeouts(int $connectTimeoutMs, int $timeoutMs): static
+    {
+        return new self($this->configuration->withTimeouts($connectTimeoutMs, $timeoutMs));
+    }
 
     public function send(string $method, string $url, array $headers, ?string $body): Response
     {

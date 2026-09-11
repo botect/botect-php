@@ -251,7 +251,7 @@ use Botect\Laravel\Facades\Botect;
 $verdict = Botect::lookupVerdict($sessionToken);
 ```
 
-This method makes one immediate HTTP request and waits up to the configured timeout. It does not retry or buffer a refresh. Invalid input, a missing private key, network failures, and unavailable evidence return an allow verdict.
+This method makes one immediate HTTP request and waits up to the lookup timeout (1,000 ms by default). It does not retry or buffer a refresh. Invalid input, a missing private key, network failures, and unavailable evidence return an allow verdict.
 
 ### Cached lookup
 
@@ -368,17 +368,29 @@ The default handler returns HTTP 403 for `block` and HTTP 429 with `Retry-After:
 | Collector URL | `collectorUrl` | `botect.collector_url` / `BOTECT_COLLECTOR_URL` | `https://cdn.botect.ai/v1/sdk.js` |
 | Server ingest | `serverIngestEnabled` | `botect.server_ingest_enabled` / `BOTECT_SERVER_INGEST_ENABLED` | `false` |
 | Local ingest path | `ingestPath` | `botect.ingest_path` / `BOTECT_INGEST_PATH` | `/_botect/events` |
-| Connection timeout | `connectTimeoutMs` | `botect.connect_timeout_ms` | 200 ms |
-| Request timeout | `timeoutMs` | `botect.timeout_ms` | 1,000 ms |
+| Lookup connection timeout | `connectTimeoutMs` | `botect.connect_timeout_ms` / `BOTECT_CONNECT_TIMEOUT_MS` | 200 ms |
+| Lookup request timeout | `timeoutMs` | `botect.timeout_ms` / `BOTECT_TIMEOUT_MS` | 1,000 ms |
+| Delivery connection timeout | `deliveryConnectTimeoutMs` | `botect.delivery_connect_timeout_ms` / `BOTECT_DELIVERY_CONNECT_TIMEOUT_MS` | 1,000 ms |
+| Delivery request timeout | `deliveryTimeoutMs` | `botect.delivery_timeout_ms` / `BOTECT_DELIVERY_TIMEOUT_MS` | 5,000 ms |
 | Verdict cache lifetime | `verdictTtl` | `botect.verdict_ttl` | 10 seconds |
 | Signed page token lifetime | `pageTokenTtl` | `botect.page_token_ttl` | 900 seconds |
 | Maximum forwarded body size | `maxBodyBytes` | `botect.max_body_bytes` | 262,144 bytes |
 
 API and collector URLs must be absolute HTTPS URLs. See [`Configuration`](src/Configuration.php) for validation limits and [`config/botect.php`](config/botect.php) for Laravel delivery, cache, cookie, and tracking settings.
 
+### Timeouts
+
+The SDK makes two kinds of request, and they have different budgets.
+
+- **Immediate lookups** (`lookupVerdict()`) run inside a visitor's request, so the lookup timeouts stay short: 200 ms to connect and 1,000 ms in total by default. If Botect does not answer in time, the request continues with an allow verdict.
+- **Background deliveries** (page hits, forwarded events, logged-in assertions, and cached-verdict refreshes) run in a queue or spool worker where nothing waits on them, so they use the delivery timeouts: 1,000 ms to connect and 5,000 ms in total by default. A delivery that times out is retried by the worker, so a limit that is too short only turns a slow Botect response into a retry and an error report.
+- **Deferred delivery** holds a PHP-FPM worker after the response has been sent, so it keeps the lookup timeouts. Its 1,000 ms drain budget is separate and is checked between deliveries.
+
+Both pairs are capped at 10,000 ms. Laravel's delivery job allows 15 seconds per attempt, so keep the delivery request timeout below that. A custom transport receives the delivery limits only if it implements [`TimeoutAwareTransport`](src/Contracts/TimeoutAwareTransport.php); one that implements only `HttpTransport` uses the limits it was built with for every request.
+
 Delivery values, defaults, and configuration locations are listed in [Choose a delivery mode](#choose-a-delivery-mode). Supplying a storage directory alone enables file verdict caching; it does not select spool delivery.
 
-For custom infrastructure, the core accepts implementations of [`Dispatcher`](src/Contracts/Dispatcher.php), [`VerdictCache`](src/Contracts/VerdictCache.php), and [`HttpTransport`](src/Contracts/HttpTransport.php). Laravel applications can bind those contracts in their own service provider.
+For custom infrastructure, the core accepts implementations of [`Dispatcher`](src/Contracts/Dispatcher.php), [`VerdictCache`](src/Contracts/VerdictCache.php), and [`HttpTransport`](src/Contracts/HttpTransport.php) (implement [`TimeoutAwareTransport`](src/Contracts/TimeoutAwareTransport.php) as well to receive the delivery timeouts). Laravel applications can bind those contracts in their own service provider.
 
 ## Documentation and examples
 
