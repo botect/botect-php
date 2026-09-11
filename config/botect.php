@@ -16,8 +16,14 @@ return [
     'cookie_minutes' => 60 * 24 * 30,
     'page_token_ttl' => 900,
     'verdict_ttl' => 10,
-    'connect_timeout_ms' => 200,
-    'timeout_ms' => 1000,
+    // Immediate lookups block a visitor request: keep these short.
+    'connect_timeout_ms' => (int) env('BOTECT_CONNECT_TIMEOUT_MS', 200),
+    'timeout_ms' => (int) env('BOTECT_TIMEOUT_MS', 1000),
+    // Queue and spool deliveries run in a worker where nothing waits on them.
+    // Deferred delivery holds a PHP-FPM worker after the response and keeps
+    // the short limits above.
+    'delivery_connect_timeout_ms' => (int) env('BOTECT_DELIVERY_CONNECT_TIMEOUT_MS', 1000),
+    'delivery_timeout_ms' => (int) env('BOTECT_DELIVERY_TIMEOUT_MS', 5000),
     'max_body_bytes' => 262144,
 
     // deferred needs no worker; spool and queue are explicit durable options.

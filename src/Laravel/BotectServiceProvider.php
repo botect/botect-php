@@ -46,6 +46,8 @@ final class BotectServiceProvider extends ServiceProvider
             verdictTtl: (int) $app['config']->get('botect.verdict_ttl'),
             pageTokenTtl: (int) $app['config']->get('botect.page_token_ttl'),
             maxBodyBytes: (int) $app['config']->get('botect.max_body_bytes'),
+            deliveryConnectTimeoutMs: (int) $app['config']->get('botect.delivery_connect_timeout_ms', 1000),
+            deliveryTimeoutMs: (int) $app['config']->get('botect.delivery_timeout_ms', 5000),
         ));
         $this->app->singletonIf(HttpTransport::class, fn ($app): HttpTransport => new LaravelHttpTransport($app->make(Factory::class), $app->make(Configuration::class)));
         $this->app->singletonIf(VerdictCache::class, fn ($app): VerdictCache => new LaravelVerdictCache($app['cache']->store($app['config']->get('botect.cache_store')), $app->make(Configuration::class)->namespace()));

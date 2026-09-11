@@ -4,6 +4,17 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
+## v0.1.2 — 2026-09-11
+
+### Added
+
+- Separate timeouts for background deliveries: `deliveryConnectTimeoutMs` / `deliveryTimeoutMs` in plain PHP and `botect.delivery_connect_timeout_ms` / `botect.delivery_timeout_ms` (`BOTECT_DELIVERY_CONNECT_TIMEOUT_MS` / `BOTECT_DELIVERY_TIMEOUT_MS`) in Laravel, defaulting to 1,000 ms and 5,000 ms. Queue and spool deliveries run where nothing waits on them, and the previous 1,000 ms limit turned a slow Botect response into a retry and an error report. Immediate lookups keep the short lookup timeouts; deferred delivery keeps them too, because it holds a PHP-FPM worker after the response.
+- `TimeoutAwareTransport`, an optional contract for custom transports that want the delivery limits. Transports implementing only `HttpTransport` keep working unchanged.
+
+### Changed
+
+- The lookup timeouts can be set from the environment in Laravel (`BOTECT_CONNECT_TIMEOUT_MS`, `BOTECT_TIMEOUT_MS`); the published configuration previously hardcoded them.
+
 ## v0.1.1 — 2026-09-10
 
 ### Added

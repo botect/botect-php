@@ -20,6 +20,8 @@ final readonly class Configuration
         public int $verdictTtl = 10,
         public int $pageTokenTtl = 900,
         public int $maxBodyBytes = 262144,
+        public int $deliveryConnectTimeoutMs = 1000,
+        public int $deliveryTimeoutMs = 5000,
     ) {
         if ($siteKey === '' || preg_match('/[\x00-\x20\x7f]/', $siteKey)) {
             throw new InvalidArgumentException('A non-empty site key without whitespace is required.');
@@ -36,12 +38,18 @@ final readonly class Configuration
         if (! preg_match('~^/(?!/)[a-zA-Z0-9/_-]+$~D', $ingestPath)) {
             throw new InvalidArgumentException('The ingest path must be a local absolute path.');
         }
-        if ($connectTimeoutMs < 1 || $timeoutMs < $connectTimeoutMs || $timeoutMs > 10000 || $verdictTtl < 1 || $verdictTtl > 60 || $pageTokenTtl < 60 || $pageTokenTtl > 3600 || $maxBodyBytes < 1024 || $maxBodyBytes > 1048576) {
+        if ($connectTimeoutMs < 1 || $timeoutMs < $connectTimeoutMs || $timeoutMs > 10000 || $deliveryConnectTimeoutMs < 1 || $deliveryTimeoutMs < $deliveryConnectTimeoutMs || $deliveryTimeoutMs > 10000 || $verdictTtl < 1 || $verdictTtl > 60 || $pageTokenTtl < 60 || $pageTokenTtl > 3600 || $maxBodyBytes < 1024 || $maxBodyBytes > 1048576) {
             throw new InvalidArgumentException('Invalid SDK timeout, lifetime, or payload limit.');
         }
         if ($serverIngestEnabled && $privateKey === null) {
             throw new InvalidArgumentException('Server ingest requires a private key.');
         }
+    }
+
+    /** The same configuration with different HTTP limits, validated again. */
+    public function withTimeouts(int $connectTimeoutMs, int $timeoutMs): self
+    {
+        return new self($this->siteKey, $this->privateKey, $this->apiUrl, $this->collectorUrl, $this->serverIngestEnabled, $this->ingestPath, $connectTimeoutMs, $timeoutMs, $this->verdictTtl, $this->pageTokenTtl, $this->maxBodyBytes, $this->deliveryConnectTimeoutMs, $this->deliveryTimeoutMs);
     }
 
     public function namespace(): string

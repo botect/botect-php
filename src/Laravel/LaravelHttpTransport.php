@@ -5,16 +5,21 @@ declare(strict_types=1);
 namespace Botect\Laravel;
 
 use Botect\Configuration;
-use Botect\Contracts\HttpTransport;
+use Botect\Contracts\TimeoutAwareTransport;
 use Botect\Exceptions\DeliveryException;
 use Botect\Http\Response;
 use Illuminate\Http\Client\Factory;
 use Psr\Http\Message\ResponseInterface;
 use Throwable;
 
-final readonly class LaravelHttpTransport implements HttpTransport
+final readonly class LaravelHttpTransport implements TimeoutAwareTransport
 {
     public function __construct(private Factory $http, private Configuration $configuration) {}
+
+    public function withTimeouts(int $connectTimeoutMs, int $timeoutMs): static
+    {
+        return new self($this->http, $this->configuration->withTimeouts($connectTimeoutMs, $timeoutMs));
+    }
 
     public function send(string $method, string $url, array $headers, ?string $body): Response
     {
