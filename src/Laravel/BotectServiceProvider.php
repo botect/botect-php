@@ -20,6 +20,8 @@ use Botect\Laravel\Middleware\TrackPage;
 use Botect\Storage\FileSpool;
 use Illuminate\Contracts\Bus\Dispatcher as Bus;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Contracts\Http\Kernel as HttpKernel;
+use Illuminate\Foundation\Http\Kernel as FoundationKernel;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Blade;
@@ -77,7 +79,13 @@ final class BotectServiceProvider extends ServiceProvider
         $router->aliasMiddleware('botect.track', TrackPage::class);
         $router->aliasMiddleware('botect.enforce', EnforceVerdict::class);
         if (config('botect.tracking.enabled') && config('botect.server_ingest_enabled')) {
-            $router->pushMiddlewareToGroup('web', TrackPage::class);
+            // Published configurations from before `scope` existed replace the
+            // whole `tracking` array, so an absent key means the old behaviour.
+            match (config('botect.tracking.scope', 'web')) {
+                'web' => $this->trackWebRoutes($router),
+                'manual' => null,
+                default => throw new InvalidArgumentException('Unknown Botect tracking scope.'),
+            };
         }
         if (! $this->app->routesAreCached() && config('botect.server_ingest_enabled') && config('botect.site_key')) {
             $path = $this->app->make(Configuration::class)->ingestPath;
@@ -91,5 +99,27 @@ final class BotectServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([FlushCommand::class]);
         }
+    }
+
+    /**
+     * Add tracking to the Kernel's web group rather than only the Router's.
+     *
+     * The HTTP Kernel owns middleware groups, and its group and priority
+     * mutators copy them back over the Router's. Laravel Sanctum calls one
+     * during its own boot, after this provider in discovery order, so a
+     * Router-only push was silently discarded: no collector, no session
+     * cookie, no page observations, and no error.
+     */
+    private function trackWebRoutes(Router $router): void
+    {
+        if ($this->app->bound(HttpKernel::class)) {
+            $kernel = $this->app->make(HttpKernel::class);
+            if ($kernel instanceof FoundationKernel && array_key_exists('web', $kernel->getMiddlewareGroups())) {
+                $kernel->appendMiddlewareToGroup('web', TrackPage::class);
+
+                return;
+            }
+        }
+        $router->pushMiddlewareToGroup('web', TrackPage::class);
     }
 }
