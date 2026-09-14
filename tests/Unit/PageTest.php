@@ -121,3 +121,14 @@ test('accepts the botect-web collector 1.5.0 contract fixture', function (): voi
         ->and($payload['events'][2]['payload'])->toBe($body['events'][2]['payload'])
         ->and($payload['events'][0]['payload'])->not->toHaveKey('page_path_shape');
 });
+
+test('forwards only an explicitly supplied server observation IP', function (): void {
+    $page = $this->sdk->page();
+    $body = ['events' => [['request_id' => 'e1', 'type' => 'js_probe', 'received_at' => '2026-09-08T00:00:00Z', 'payload' => ['webdriver' => true]]]];
+    $this->sdk->forwardEvents($page->token, $body, observedIp: '2001:0db8::1');
+    expect($this->dispatcher->deliveries[0]->payload['observed_ip'])->toBe('2001:db8::1');
+    $this->sdk->recordPage($page, 'GET', '/', observedIp: '203.0.113.7');
+    expect($this->dispatcher->deliveries[1]->payload['observed_ip'])->toBe('203.0.113.7');
+    $body['observed_ip'] = '203.0.113.99';
+    expect(fn () => $this->sdk->forwardEvents($page->token, $body))->toThrow(InvalidArgumentException::class);
+});
