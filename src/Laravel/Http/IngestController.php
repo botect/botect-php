@@ -36,7 +36,7 @@ final class IngestController
             if (! is_array($body) || ! is_string($token)) {
                 throw new InvalidArgumentException('Invalid payload.');
             }
-            $queued = app(Botect::class)->forwardEvents($token, $body, $request->header('Idempotency-Key'), app(VisitorSessionCookie::class)->read($request));
+            $queued = app(Botect::class)->forwardEvents($token, $body, $request->header('Idempotency-Key'), app(VisitorSessionCookie::class)->read($request), $request->ip());
 
             return response()->json(['queued' => $queued], $queued ? 202 : 503, ['Cache-Control' => 'no-store']);
         } catch (SessionMismatchException $exception) {

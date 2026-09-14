@@ -4,6 +4,12 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
+## v0.1.4 — 2026-09-14
+
+### Added
+
+- Page and event deliveries now carry the visitor's address as observed by your server (`observed_ip`), so Botect can attribute enforcement evidence to the network a request actually came from rather than to the address the session was first minted on. The Laravel middleware and ingest controller supply it from `$request->ip()` automatically; plain-PHP callers pass it as the new optional last argument to `recordPage()` and `forwardEvents()`. Addresses are validated and canonicalised before sending, and a value injected into the browser payload is rejected. Because the value comes from `$request->ip()`, your application's trusted-proxy configuration must be correct when it runs behind a CDN or load balancer, or every visitor will be reported as the proxy.
+
 ## v0.1.3 — 2026-09-11
 
 ### Changed
