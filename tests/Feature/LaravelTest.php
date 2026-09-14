@@ -438,3 +438,15 @@ test('queue connection and queue name overrides work independently', function (?
     'queue only' => [null, 'custom-botect', 'database'],
     'both' => ['redis', 'custom-botect', 'redis'],
 ]);
+
+test('the ingest adapter attributes events to the visitor request rather than the page token', function (): void {
+    config(['botect.server_ingest_enabled' => true]);
+    $sdk = app(Botect::class);
+    $page = $sdk->page();
+    $request = Request::create('/collect?page_token='.urlencode($page->token), 'POST', [], [], [], ['REMOTE_ADDR' => '203.0.113.19', 'CONTENT_TYPE' => 'application/json'], json_encode([
+        'events' => [['request_id' => 'event-1', 'type' => 'js_probe', 'received_at' => '2026-09-08T00:00:00Z', 'payload' => ['webdriver' => true]]],
+    ]));
+    $response = app(IngestController::class)($request);
+    expect($response->getStatusCode())->toBe(202);
+    expect($this->dispatcher->forOperation(Operation::ForwardEvents)[0]->payload['observed_ip'])->toBe('203.0.113.19');
+});

@@ -18,7 +18,7 @@ final readonly class ForwardEventsAction
     public function __construct(private Configuration $configuration, private Dispatcher $dispatcher, private PageTokens $tokens) {}
 
     /** @param array<string, mixed> $body */
-    public function execute(string $pageToken, array $body, ?string $idempotencyKey = null, ?string $sessionCookie = null): bool
+    public function execute(string $pageToken, array $body, ?string $idempotencyKey = null, ?string $sessionCookie = null, ?string $observedIp = null): bool
     {
         if (! $this->configuration->serverIngestEnabled) {
             return false;
@@ -45,6 +45,10 @@ final readonly class ForwardEventsAction
         }
         $batchKey = $idempotencyKey ?? hash('sha256', json_encode($events, JSON_THROW_ON_ERROR));
         $payload = ['schema_version' => 1, 'page_id' => $page->id, 'session_token' => $page->sessionToken, 'events' => $events];
+
+        if ($observedIp !== null && filter_var($observedIp, FILTER_VALIDATE_IP) !== false) {
+            $payload['observed_ip'] = inet_ntop(inet_pton($observedIp));
+        }
 
         return $this->dispatcher->dispatch(Delivery::make(Operation::ForwardEvents, $page->sessionToken, $payload, $page->id.'|'.$batchKey));
     }

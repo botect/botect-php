@@ -110,9 +110,9 @@ final readonly class Botect
     }
 
     /** @param list<string> $headerNames */
-    public function recordPage(Page $page, string $method, string $path, array $headerNames = [], string $acceptLanguage = '', int $durationMs = 0): bool
+    public function recordPage(Page $page, string $method, string $path, array $headerNames = [], string $acceptLanguage = '', int $durationMs = 0, ?string $observedIp = null): bool
     {
-        return (new RecordPageAction($this->configuration, $this->dispatcher))->execute($page, $method, $path, $headerNames, $acceptLanguage, $durationMs);
+        return (new RecordPageAction($this->configuration, $this->dispatcher))->execute($page, $method, $path, $headerNames, $acceptLanguage, $durationMs, $observedIp);
     }
 
     /**
@@ -125,9 +125,9 @@ final readonly class Botect
      *
      * @param  array<string, mixed>  $body
      */
-    public function forwardEvents(string $pageToken, array $body, ?string $idempotencyKey = null, ?string $sessionCookie = null): bool
+    public function forwardEvents(string $pageToken, array $body, ?string $idempotencyKey = null, ?string $sessionCookie = null, ?string $observedIp = null): bool
     {
-        return (new ForwardEventsAction($this->configuration, $this->dispatcher, new PageTokens($this->configuration)))->execute($pageToken, $body, $idempotencyKey, $sessionCookie);
+        return (new ForwardEventsAction($this->configuration, $this->dispatcher, new PageTokens($this->configuration)))->execute($pageToken, $body, $idempotencyKey, $sessionCookie, $observedIp);
     }
 
     public function collector(?Page $page = null, ?string $cspNonce = null): string
