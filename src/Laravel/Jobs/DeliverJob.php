@@ -47,7 +47,23 @@ final class DeliverJob implements ShouldBeUnique, ShouldQueue
 
                 return;
             }
-            throw $exception;
+            // Called directly rather than by a queue worker: nothing to release
+            // into, so surface the failure to the caller as before.
+            if ($this->job === null) {
+                throw $exception;
+            }
+            if ($this->attempts() >= $this->tries) {
+                $this->fail($exception);
+
+                return;
+            }
+            // A retryable failure (a Botect deploy, a slow response, a 5xx)
+            // usually succeeds on a later attempt. Throwing would make the queue
+            // worker report every attempt to the error tracker, so a routine
+            // restart looked like data loss. Release instead: only a delivery
+            // that finally fails is reported, once, by failed() with its reason.
+            $backoff = $this->backoff();
+            $this->release($backoff[min($this->attempts() - 1, count($backoff) - 1)]);
         }
     }
 

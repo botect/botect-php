@@ -558,3 +558,46 @@ test('the middleware and ingest controller resolve the visitor IP even when wire
     expect($response->getStatusCode())->toBe(200)
         ->and($this->dispatcher->forOperation(Operation::RecordPage)[0]->payload['observed_ip'])->toBe('203.0.113.30');
 });
+
+test('a retryable delivery failure is released with backoff and reports nothing', function (int $attempt, int $delay): void {
+    $logger = new FakeLogger;
+    $this->app->instance(LoggerInterface::class, $logger);
+    $this->transport->result = new Response(503, '');
+    $job = (new DeliverJob(Delivery::make(Operation::AssertLoggedIn, 'sess_test')))->withFakeQueueInteractions();
+    $job->job->attempts = $attempt;
+
+    $job->handle($this->app->make(Botect::class));
+
+    $job->assertReleased($delay);
+    $job->assertNotFailed();
+    expect($logger->records)->toBe([]);
+})->with([
+    'first attempt' => [1, 2],
+    'second attempt' => [2, 10],
+    'third attempt' => [3, 30],
+    'fourth attempt' => [4, 120],
+]);
+
+test('a retryable delivery failure on the last attempt fails the job once', function (): void {
+    $this->transport->result = new Response(503, '');
+    $job = (new DeliverJob(Delivery::make(Operation::AssertLoggedIn, 'sess_test')))->withFakeQueueInteractions();
+    $job->job->attempts = $job->tries;
+
+    $job->handle($this->app->make(Botect::class));
+
+    $job->assertNotReleased();
+    $job->assertFailedWith(DeliveryException::class);
+    expect($job->job->failedWith->retryable)->toBeTrue()
+        ->and($job->job->failedWith->status)->toBe(503);
+});
+
+test('a permanent delivery failure fails the job on its first attempt without a retry', function (): void {
+    $this->transport->result = new Response(400, '{"code":"INVALID_PAYLOAD"}');
+    $job = (new DeliverJob(Delivery::make(Operation::AssertLoggedIn, 'sess_test')))->withFakeQueueInteractions();
+
+    $job->handle($this->app->make(Botect::class));
+
+    $job->assertNotReleased();
+    $job->assertFailedWith(DeliveryException::class);
+    expect($job->job->failedWith->retryable)->toBeFalse();
+});
