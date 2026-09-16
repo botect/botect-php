@@ -4,6 +4,12 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
+## v0.1.6 — 2026-09-16
+
+### Changed
+
+- A background delivery that fails in a way worth retrying (a timeout, a 5xx, a rate limit) is now released back to the queue with backoff instead of throwing, so queue workers no longer report every attempt to your error tracker. A routine Botect deploy used to produce a burst of "transport or response failure" reports for deliveries that then succeeded. Only a delivery that finally fails, after its last attempt or on a permanent error, is logged, once, by `DeliverJob::failed()` with its reason, age and attempt count. Calling `DeliverJob::handle()` outside a queue still throws retryable failures, as before.
+
 ## v0.1.5 — 2026-09-16
 
 ### Added
