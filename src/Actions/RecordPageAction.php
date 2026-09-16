@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Botect\Actions;
 
+use Botect\ClientIp;
 use Botect\Configuration;
 use Botect\Contracts\Dispatcher;
 use Botect\Delivery;
@@ -20,7 +21,7 @@ final readonly class RecordPageAction
     /** Header names are best-effort PHP observation order, never original wire order.
      * @param  list<string>  $headerNames
      */
-    public function execute(Page $page, string $method, string $path, array $headerNames = [], string $acceptLanguage = '', int $durationMs = 0, ?string $observedIp = null): bool
+    public function execute(Page $page, string $method, string $path, array $headerNames = [], string $acceptLanguage = '', int $durationMs = 0, ClientIp|string|null $observedIp = null): bool
     {
         if (! $this->configuration->serverIngestEnabled) {
             return false;
@@ -59,8 +60,10 @@ final readonly class RecordPageAction
                 'ja4' => null,
             ];
 
-            if ($observedIp !== null && filter_var($observedIp, FILTER_VALIDATE_IP) !== false) {
-                $payload['observed_ip'] = inet_ntop(inet_pton($observedIp));
+            // A plain string is the application's own answer: explicit, not inferred.
+            $observed = $observedIp instanceof ClientIp ? $observedIp : ClientIp::fromString($observedIp, ClientIp::SOURCE_RESOLVER);
+            if ($observed !== null) {
+                $payload += $observed->toPayload();
             }
 
             return $this->dispatcher->dispatch(Delivery::make(Operation::RecordPage, $page->sessionToken, $payload, $page->id));

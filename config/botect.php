@@ -12,6 +12,14 @@ return [
     // Enable only after the server-ingest backend contracts are deployed.
     'server_ingest_enabled' => (bool) env('BOTECT_SERVER_INGEST_ENABLED', false),
     'ingest_path' => env('BOTECT_INGEST_PATH', '/_botect/events'),
+    // Which address to report as the visitor's with page hits and forwarded
+    // events. `auto` uses the request address when it is public and otherwise
+    // guesses from the headers common edges set, marking the result inferred
+    // (weaker evidence) and logging once. Pin it once you know your setup:
+    // `request` (trust your proxy configuration), `cloudflare`
+    // (CF-Connecting-IP), `header:<Name>` (any header your edge overwrites),
+    // or a class implementing Botect\Laravel\Contracts\ClientIpResolver.
+    'client_ip' => env('BOTECT_CLIENT_IP', 'auto'),
     'cookie_name' => 'botect_server_session',
     'cookie_minutes' => 60 * 24 * 30,
     'page_token_ttl' => 900,

@@ -6,6 +6,7 @@ namespace Botect\Laravel\Http;
 
 use Botect\Botect;
 use Botect\Exceptions\SessionMismatchException;
+use Botect\Laravel\ClientIp\ClientIpResolverFactory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
@@ -36,7 +37,7 @@ final class IngestController
             if (! is_array($body) || ! is_string($token)) {
                 throw new InvalidArgumentException('Invalid payload.');
             }
-            $queued = app(Botect::class)->forwardEvents($token, $body, $request->header('Idempotency-Key'), app(VisitorSessionCookie::class)->read($request), $request->ip());
+            $queued = app(Botect::class)->forwardEvents($token, $body, $request->header('Idempotency-Key'), app(VisitorSessionCookie::class)->read($request), ClientIpResolverFactory::resolve(app())->resolve($request));
 
             return response()->json(['queued' => $queued], $queued ? 202 : 503, ['Cache-Control' => 'no-store']);
         } catch (SessionMismatchException $exception) {

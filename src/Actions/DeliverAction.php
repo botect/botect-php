@@ -13,12 +13,15 @@ use Botect\Operation;
 
 final readonly class DeliverAction
 {
+    /** Older deliveries are dropped: Botect will not accept them and retrying cannot make them younger. */
+    public const MAX_AGE_SECONDS = 3600;
+
     public function __construct(private ApiClient $client, private VerdictCache $cache, private Configuration $configuration) {}
 
     public function execute(Delivery $delivery): void
     {
-        if ($delivery->createdAt < time() - 3600) {
-            throw new DeliveryException(false);
+        if ($delivery->createdAt < time() - self::MAX_AGE_SECONDS) {
+            throw DeliveryException::expired(time() - $delivery->createdAt, self::MAX_AGE_SECONDS);
         }
         if ($delivery->operation === Operation::RefreshVerdict) {
             $verdict = $this->client->verdict($delivery->sessionToken, $delivery->payload['context']);

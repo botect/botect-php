@@ -4,6 +4,19 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
+## v0.1.5 — 2026-09-16
+
+### Added
+
+- `botect.client_ip` (`BOTECT_CLIENT_IP`) decides which address is reported as the visitor's with page hits and forwarded events. The default, `auto`, uses the request address when it is public and otherwise guesses from the headers common edges set, marking the result inferred (Botect keeps inferred addresses for diagnostics only and never uses them as evidence); `request`, `cloudflare`, `header:<Name>` or a class implementing `Botect\Laravel\Contracts\ClientIpResolver` make the choice explicit. Deliveries now carry `observed_ip_source` and `observed_ip_inferred` alongside `observed_ip`, and `auto` logs one warning when it has to guess.
+- `Botect\ClientIp`, accepted by `recordPage()` and `forwardEvents()` alongside a plain string.
+
+### Changed
+
+- The SDK never reports a private or reserved address. Behind an untrusted proxy, v0.1.4 sent the proxy's own address (a Swarm overlay address, in the case that prompted this), which made every visitor look like one.
+- A delivery that has waited longer than the ingest window is dropped with a message saying it expired and how old it was, instead of the generic transport failure.
+- `DeliverJob::failed()` now logs the exception class, message, HTTP status, retryability and the delivery's age, so a failed delivery in your error tracker says why.
+
 ## v0.1.4 — 2026-09-14
 
 ### Added

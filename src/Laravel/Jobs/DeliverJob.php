@@ -53,6 +53,14 @@ final class DeliverJob implements ShouldBeUnique, ShouldQueue
 
     public function failed(?Throwable $exception): void
     {
-        app(LoggerInterface::class)->warning('Botect background delivery failed.', ['operation' => $this->delivery->operation->value]);
+        app(LoggerInterface::class)->warning('Botect background delivery failed.', [
+            'operation' => $this->delivery->operation->value,
+            'age_seconds' => max(0, time() - $this->delivery->createdAt),
+            'attempts' => $this->attempts(),
+            'exception' => $exception === null ? null : $exception::class,
+            'reason' => $exception?->getMessage(),
+            'status' => $exception instanceof DeliveryException ? $exception->status : null,
+            'retryable' => $exception instanceof DeliveryException ? $exception->retryable : null,
+        ]);
     }
 }

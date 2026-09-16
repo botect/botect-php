@@ -3,6 +3,7 @@
 declare(strict_types=1);
 use Botect\ApiClient;
 use Botect\Botect;
+use Botect\ClientIp;
 use Botect\Configuration;
 use Botect\Contracts\Dispatcher;
 use Botect\Contracts\HttpTransport;
@@ -10,6 +11,7 @@ use Botect\Delivery;
 use Botect\Exceptions\DeliveryException;
 use Botect\Http\Response;
 use Botect\Laravel\BotectServiceProvider;
+use Botect\Laravel\Contracts\ClientIpResolver;
 use Botect\Laravel\Contracts\VerdictHandler;
 use Botect\Laravel\Http\IngestController;
 use Botect\Laravel\Jobs\DeliverJob;
@@ -449,4 +451,110 @@ test('the ingest adapter attributes events to the visitor request rather than th
     $response = app(IngestController::class)($request);
     expect($response->getStatusCode())->toBe(202);
     expect($this->dispatcher->forOperation(Operation::ForwardEvents)[0]->payload['observed_ip'])->toBe('203.0.113.19');
+});
+
+test('auto client IP trusts a public request address and reports it as explicit', function (): void {
+    config(['botect.server_ingest_enabled' => true]);
+    $page = app(Botect::class)->page();
+    $request = Request::create('/collect?page_token='.urlencode($page->token), 'POST', [], [], [], ['REMOTE_ADDR' => '203.0.113.19', 'HTTP_CF_CONNECTING_IP' => '198.51.100.5', 'CONTENT_TYPE' => 'application/json'], json_encode([
+        'events' => [['request_id' => 'event-1', 'type' => 'js_probe', 'received_at' => '2026-09-08T00:00:00Z', 'payload' => ['webdriver' => true]]],
+    ]));
+    expect(app(IngestController::class)($request)->getStatusCode())->toBe(202);
+    $payload = $this->dispatcher->forOperation(Operation::ForwardEvents)[0]->payload;
+    expect($payload['observed_ip'])->toBe('203.0.113.19')
+        ->and($payload['observed_ip_source'])->toBe('request')
+        ->and($payload['observed_ip_inferred'])->toBeFalse();
+});
+
+test('auto client IP guesses from an edge header behind an untrusted proxy, marks it inferred, and warns once', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true]);
+    $logger = new FakeLogger;
+    $this->app->instance(LoggerInterface::class, $logger);
+    Route::get('/tracked', fn () => response('<html><head></head><body>ok</body></html>', 200, ['Content-Type' => 'text/html']))->middleware('botect.track');
+    $server = ['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '10.0.0.2', 'HTTP_CF_CONNECTING_IP' => '198.51.100.5, 172.16.0.1'];
+    $this->call('GET', '/tracked', [], [], [], $server)->assertOk();
+    $this->call('GET', '/tracked', [], [], [], $server)->assertOk();
+    $hits = $this->dispatcher->forOperation(Operation::RecordPage);
+    expect($hits)->toHaveCount(2)
+        ->and($hits[0]->payload['observed_ip'])->toBe('198.51.100.5')
+        ->and($hits[0]->payload['observed_ip_source'])->toBe('header')
+        ->and($hits[0]->payload['observed_ip_inferred'])->toBeTrue();
+    $warnings = array_values(array_filter($logger->records, fn (array $record): bool => str_contains($record[1], 'guessing the visitor IP')));
+    expect($warnings)->toHaveCount(1)
+        ->and($warnings[0][1])->toContain('BOTECT_CLIENT_IP', 'CF-Connecting-IP')
+        ->and($warnings[0][2])->toBe(['request_ip' => '10.0.0.2', 'header' => 'CF-Connecting-IP']);
+});
+
+test('no address is sent when neither the request nor any edge header yields a public one', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true]);
+    Route::get('/tracked', fn () => response('<html><head></head><body>ok</body></html>', 200, ['Content-Type' => 'text/html']))->middleware('botect.track');
+    $this->call('GET', '/tracked', [], [], [], ['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_REAL_IP' => '192.168.4.4'])->assertOk();
+    expect($this->dispatcher->forOperation(Operation::RecordPage)[0]->payload)->not->toHaveKeys(['observed_ip', 'observed_ip_source', 'observed_ip_inferred']);
+});
+
+test('an explicit client_ip setting reports the header as explicit evidence', function (string $setting, array $server, ?string $expected): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true, 'botect.client_ip' => $setting]);
+    $this->app->forgetInstance(ClientIpResolver::class);
+    Route::get('/tracked', fn () => response('<html><head></head><body>ok</body></html>', 200, ['Content-Type' => 'text/html']))->middleware('botect.track');
+    $this->call('GET', '/tracked', [], [], [], $server + ['REMOTE_ADDR' => '10.0.0.2'])->assertOk();
+    $payload = $this->dispatcher->forOperation(Operation::RecordPage)[0]->payload;
+    if ($expected === null) {
+        expect($payload)->not->toHaveKey('observed_ip');
+    } else {
+        expect($payload['observed_ip'])->toBe($expected)
+            ->and($payload['observed_ip_inferred'])->toBeFalse();
+    }
+})->with([
+    'cloudflare' => ['cloudflare', ['HTTP_CF_CONNECTING_IP' => '198.51.100.5'], '198.51.100.5'],
+    'cloudflare ignores other headers' => ['cloudflare', ['HTTP_TRUE_CLIENT_IP' => '198.51.100.5'], null],
+    'named header' => ['header:True-Client-IP', ['HTTP_TRUE_CLIENT_IP' => '198.51.100.9'], '198.51.100.9'],
+    'request never sends the private proxy address' => ['request', ['HTTP_CF_CONNECTING_IP' => '198.51.100.5'], null],
+]);
+
+test('a custom resolver class is used when named in client_ip', function (): void {
+    $resolver = new class implements ClientIpResolver
+    {
+        public function resolve(Request $request): ?ClientIp
+        {
+            return ClientIp::fromString($request->header('X-App-Client'), ClientIp::SOURCE_RESOLVER);
+        }
+    };
+    $this->app->instance($resolver::class, $resolver);
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true, 'botect.client_ip' => $resolver::class]);
+    $this->app->forgetInstance(ClientIpResolver::class);
+    Route::get('/tracked', fn () => response('<html><head></head><body>ok</body></html>', 200, ['Content-Type' => 'text/html']))->middleware('botect.track');
+    $this->call('GET', '/tracked', [], [], [], ['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_APP_CLIENT' => '198.51.100.77'])->assertOk();
+    $payload = $this->dispatcher->forOperation(Operation::RecordPage)[0]->payload;
+    expect($payload['observed_ip'])->toBe('198.51.100.77')->and($payload['observed_ip_source'])->toBe('resolver');
+});
+
+test('an unknown client_ip setting fails loudly instead of silently dropping addresses', function (): void {
+    config(['botect.client_ip' => 'x-forwarded-for']);
+    $this->app->forgetInstance(ClientIpResolver::class);
+    expect(fn () => $this->app->make(ClientIpResolver::class))->toThrow(InvalidArgumentException::class, 'client_ip');
+});
+
+test('a failed delivery job logs why it failed', function (): void {
+    $logger = new FakeLogger;
+    $this->app->instance(LoggerInterface::class, $logger);
+    $delivery = new Delivery(Operation::RecordPage, 'sess_'.str_repeat('a', 48), [], str_repeat('b', 64), time() - 7200);
+    (new DeliverJob($delivery))->failed(DeliveryException::expired(7200, 3600));
+    $record = $logger->records[0];
+    expect($record[1])->toBe('Botect background delivery failed.')
+        ->and($record[2]['operation'])->toBe('record_page')
+        ->and($record[2]['exception'])->toBe(DeliveryException::class)
+        ->and($record[2]['reason'])->toContain('expired')
+        ->and($record[2]['retryable'])->toBeFalse()
+        ->and($record[2]['age_seconds'])->toBeGreaterThanOrEqual(7200);
+});
+
+test('the middleware and ingest controller resolve the visitor IP even when wired without the provider binding', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true]);
+    $this->app->forgetInstance(ClientIpResolver::class);
+    $this->app->offsetUnset(ClientIpResolver::class);
+    expect($this->app->bound(ClientIpResolver::class))->toBeFalse();
+    $request = Request::create('https://customer.test/welcome', 'GET', server: ['REMOTE_ADDR' => '203.0.113.30']);
+    $response = (new TrackPage($this->app))->handle($request, fn () => response('<html><head></head><body>ok</body></html>', 200, ['Content-Type' => 'text/html']));
+    expect($response->getStatusCode())->toBe(200)
+        ->and($this->dispatcher->forOperation(Operation::RecordPage)[0]->payload['observed_ip'])->toBe('203.0.113.30');
 });
