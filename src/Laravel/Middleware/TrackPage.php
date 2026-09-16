@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Botect\Laravel\Middleware;
 
 use Botect\Botect;
+use Botect\Laravel\ClientIp\ClientIpResolverFactory;
 use Closure;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Http\Request;
@@ -58,7 +59,7 @@ final readonly class TrackPage
             foreach (['Content-Length', 'ETag', 'Last-Modified'] as $header) {
                 $response->headers->remove($header);
             }
-            $botect->recordPage($page, $request->method(), $request->getPathInfo(), array_keys($request->headers->all()), (string) $request->header('Accept-Language', ''), (int) ((hrtime(true) - $started) / 1000000), $request->ip());
+            $botect->recordPage($page, $request->method(), $request->getPathInfo(), array_keys($request->headers->all()), (string) $request->header('Accept-Language', ''), (int) ((hrtime(true) - $started) / 1000000), ClientIpResolverFactory::resolve($this->container)->resolve($request));
         } catch (Throwable) {
             return $response;
         }

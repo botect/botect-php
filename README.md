@@ -314,6 +314,24 @@ Tracking injects the collector automatically. If you render `@botect` yourself, 
 
 Rebuild Laravel's configuration and route caches after changing the server-ingest setting, the tracking settings, or the ingest path.
 
+### Which address is reported
+
+Page hits and forwarded events carry the visitor's IP address as your server observed it (`observed_ip`), so Botect can attribute what it sees to the network a request really came from. Getting that address right matters: behind a CDN, load balancer or container overlay network the raw connection comes from the proxy, and reporting that would make every visitor look like one.
+
+The SDK never sends a private or reserved address. What it sends otherwise is decided by `botect.client_ip` (`BOTECT_CLIENT_IP`):
+
+| Value | Reports | Use when |
+| --- | --- | --- |
+| `auto` (default) | The request address if it is public; otherwise the first public address in a known edge header (`CF-Connecting-IP`, `True-Client-IP`, `Fastly-Client-IP`, `Fly-Client-IP`, `X-Real-IP`, `X-Forwarded-For`), marked **inferred** | You have not configured anything yet |
+| `request` | `$request->ip()`, so your application's trusted-proxy configuration | Your proxies are already configured correctly |
+| `cloudflare` | `CF-Connecting-IP` | Your origin sits behind Cloudflare |
+| `header:<Name>` | Any single header, for example `header:True-Client-IP` | Another CDN or load balancer sets a header you trust |
+| A class name | Your own [`ClientIpResolver`](src/Laravel/Contracts/ClientIpResolver.php) | Your application already knows how to find the client address |
+
+`auto` is a guess, and Botect treats guessed addresses accordingly: the events are still scored, but the address is kept for diagnostics only. It is never used for IP-based signals, never becomes the session's address, and cannot get an address listed for enforcement. Botect's dashboard shows a warning while a project's deliveries arrive with guessed or missing addresses. When `auto` has to guess, the SDK logs one warning naming the header it used and the setting that would make it explicit. A named header is only safe if the proxy in front of you overwrites it on every request; a header a client can set itself lets anyone report any address.
+
+Plain PHP applications pass the address as the last argument to `recordPage()` and `forwardEvents()`, either as a string or as a `Botect\ClientIp`. A string counts as explicit.
+
 ### Tracking only some routes
 
 Sites that cache most of their pages should track only the routes that are never cached, such as sign-in, search, and account pages. Set `scope` to `manual` and attach the `botect.track` middleware to those routes:
@@ -368,6 +386,7 @@ The default handler returns HTTP 403 for `block` and HTTP 429 with `Retry-After:
 | Collector URL | `collectorUrl` | `botect.collector_url` / `BOTECT_COLLECTOR_URL` | `https://cdn.botect.ai/v1/sdk.js` |
 | Server ingest | `serverIngestEnabled` | `botect.server_ingest_enabled` / `BOTECT_SERVER_INGEST_ENABLED` | `false` |
 | Local ingest path | `ingestPath` | `botect.ingest_path` / `BOTECT_INGEST_PATH` | `/_botect/events` |
+| Visitor address source | argument to `recordPage()` / `forwardEvents()` | `botect.client_ip` / `BOTECT_CLIENT_IP` | `auto` |
 | Lookup connection timeout | `connectTimeoutMs` | `botect.connect_timeout_ms` / `BOTECT_CONNECT_TIMEOUT_MS` | 200 ms |
 | Lookup request timeout | `timeoutMs` | `botect.timeout_ms` / `BOTECT_TIMEOUT_MS` | 1,000 ms |
 | Delivery connection timeout | `deliveryConnectTimeoutMs` | `botect.delivery_connect_timeout_ms` / `BOTECT_DELIVERY_CONNECT_TIMEOUT_MS` | 1,000 ms |

@@ -12,7 +12,9 @@ use Botect\Contracts\Dispatcher;
 use Botect\Contracts\HttpTransport;
 use Botect\Contracts\VerdictCache;
 use Botect\Delivery\DeferredDispatcher;
+use Botect\Laravel\ClientIp\ClientIpResolverFactory;
 use Botect\Laravel\Commands\FlushCommand;
+use Botect\Laravel\Contracts\ClientIpResolver;
 use Botect\Laravel\Contracts\VerdictHandler;
 use Botect\Laravel\Http\IngestController;
 use Botect\Laravel\Middleware\EnforceVerdict;
@@ -63,6 +65,7 @@ final class BotectServiceProvider extends ServiceProvider
                 default => throw new InvalidArgumentException('Unknown Botect delivery driver.'),
             };
         });
+        $this->app->singletonIf(ClientIpResolver::class, fn ($app): ClientIpResolver => ClientIpResolverFactory::make($app));
         $this->app->singletonIf(VerdictHandler::class, fn ($app): VerdictHandler => $app->make($app['config']->get('botect.enforcement.handler')));
         $this->app->scoped(Botect::class, fn ($app): Botect => new Botect($app->make(Configuration::class), $app->make(Dispatcher::class), $app->make(VerdictCache::class), $app->make(HttpTransport::class)));
     }
@@ -92,6 +95,11 @@ final class BotectServiceProvider extends ServiceProvider
         if (! $this->app->routesAreCached() && config('botect.server_ingest_enabled') && config('botect.site_key')) {
             $path = $this->app->make(Configuration::class)->ingestPath;
             $router->post($path, IngestController::class)->name('botect.ingest');
+        }
+        if (config('botect.server_ingest_enabled')) {
+            // A bad client_ip value fails here, at boot, rather than turning
+            // every tracked page and ingest request into a swallowed error.
+            $this->app->make(ClientIpResolver::class);
         }
         Blade::directive('botect', static function (string $expression): string {
             $nonce = trim($expression) === '' ? 'null' : $expression;
