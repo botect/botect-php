@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+use Botect\Laravel\DefaultLoggedInResolver;
 use Botect\Laravel\DefaultVerdictHandler;
 
 return [
@@ -20,6 +21,12 @@ return [
     // (CF-Connecting-IP), `header:<Name>` (any header your edge overwrites),
     // or a class implementing Botect\Laravel\Contracts\ClientIpResolver.
     'client_ip' => env('BOTECT_CLIENT_IP', 'auto'),
+    // Reports auth()->check() with tracked pages and verdicts. Set resolver to
+    // null to omit the state, or name a class implementing
+    // Botect\Laravel\Contracts\LoggedInResolver.
+    'logged_in' => [
+        'resolver' => DefaultLoggedInResolver::class,
+    ],
     'cookie_name' => 'botect_server_session',
     'cookie_minutes' => 60 * 24 * 30,
     'page_token_ttl' => 900,

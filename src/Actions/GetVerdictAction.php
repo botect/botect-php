@@ -19,7 +19,7 @@ final readonly class GetVerdictAction
     public function __construct(private Configuration $configuration, private Dispatcher $dispatcher, private VerdictCache $cache) {}
 
     /** @param array<string, string> $context */
-    public function execute(string $sessionToken, array $context = []): Verdict
+    public function execute(string $sessionToken, array $context = [], ?bool $loggedIn = null): Verdict
     {
         try {
             SessionToken::validate($sessionToken);
@@ -32,12 +32,20 @@ final readonly class GetVerdictAction
                 }
             }
             ksort($context);
-            $key = hash('sha256', $this->configuration->namespace().'|'.$sessionToken.'|'.$this->cache->generation($sessionToken).'|'.json_encode($context, JSON_THROW_ON_ERROR));
+            $keyInput = $this->configuration->namespace().'|'.$sessionToken.'|'.$this->cache->generation($sessionToken).'|'.json_encode($context, JSON_THROW_ON_ERROR);
+            if ($loggedIn !== null) {
+                $keyInput .= '|li='.($loggedIn ? '1' : '0');
+            }
+            $key = hash('sha256', $keyInput);
             $cached = $this->cache->get($key);
             if ($cached !== null && $cached->available()) {
                 return $cached;
             }
-            $this->dispatcher->dispatch(Delivery::make(Operation::RefreshVerdict, $sessionToken, ['context' => $context, 'cache_key' => $key], $key));
+            $payload = ['context' => $context, 'cache_key' => $key];
+            if ($loggedIn !== null) {
+                $payload['logged_in'] = $loggedIn;
+            }
+            $this->dispatcher->dispatch(Delivery::make(Operation::RefreshVerdict, $sessionToken, $payload, $key));
         } catch (Throwable) {
             return new Verdict;
         }

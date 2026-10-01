@@ -6,6 +6,7 @@ namespace Botect\Laravel\Middleware;
 
 use Botect\Botect;
 use Botect\Laravel\Contracts\VerdictHandler;
+use Botect\Laravel\LoggedInState;
 use Closure;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Http\Request;
@@ -25,7 +26,7 @@ final readonly class EnforceVerdict
                 $session = $request->attributes->get('botect.session_token') ?? $botect->sessionToken((string) $request->cookie(config('botect.cookie_name'), ''));
                 if (is_string($session)) {
                     $context = $request->route() === null ? [] : ['path' => '/'.ltrim($request->route()->uri(), '/')];
-                    $verdict = $botect->verdict($session, $context);
+                    $verdict = $botect->verdict($session, $context, LoggedInState::of($this->container, $request));
                     $request->attributes->set('botect.verdict', $verdict);
                     $response = $this->container->make(VerdictHandler::class)->handle($request, $verdict);
                 }

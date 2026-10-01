@@ -6,6 +6,7 @@ namespace Botect\Laravel\Middleware;
 
 use Botect\Botect;
 use Botect\Laravel\ClientIp\ClientIpResolverFactory;
+use Botect\Laravel\LoggedInState;
 use Closure;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Http\Request;
@@ -28,7 +29,8 @@ final readonly class TrackPage
             }
             if (! $excluded && $request->isMethod('GET') && config('botect.tracking.enabled') && config('botect.server_ingest_enabled')) {
                 $botect = $this->container->make(Botect::class);
-                $page = $botect->page($request->cookie(config('botect.cookie_name')));
+                $loggedIn = LoggedInState::of($this->container, $request);
+                $page = $botect->page($request->cookie(config('botect.cookie_name')), $loggedIn);
                 $request->attributes->set('botect.page', $page);
                 $request->attributes->set('botect.session_token', $page->sessionToken);
             }

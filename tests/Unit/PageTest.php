@@ -17,6 +17,23 @@ beforeEach(function (): void {
     $this->sdk = new Botect($this->config, $this->dispatcher, new ArrayVerdictCache, new FakeTransport);
 });
 
+/** @return array<string, mixed> */
+function decodePageToken(string $token): array
+{
+    [$body] = explode('.', $token, 2);
+
+    return json_decode(base64_decode(strtr($body, '-_', '+/'), true), true, 8, JSON_THROW_ON_ERROR);
+}
+
+/** @param array<string, mixed> $data */
+function signPageToken(array $data): string
+{
+    $body = rtrim(strtr(base64_encode(json_encode($data, JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
+    $signature = hash_hmac('sha256', 'botect:page:pk_test:'.$body, 'sk_secret');
+
+    return $body.'.'.$signature;
+}
+
 test('page tokens expire, resist tampering, and are scoped to site and signing key', function (): void {
     $page = $this->tokens->mint(now: 1000);
     expect($this->tokens->verify($page->token, 1001)?->sessionToken)->toBe($page->sessionToken)
@@ -25,6 +42,49 @@ test('page tokens expire, resist tampering, and are scoped to site and signing k
         ->and($this->tokens->verify($page->token, 900))->toBeNull()
         ->and((new PageTokens(new Configuration('pk_other', 'sk_secret')))->verify($page->token, 1001))->toBeNull()
         ->and((new PageTokens(new Configuration('pk_test', 'rotated_secret')))->verify($page->token, 1001))->toBeNull();
+});
+
+test('page tokens preserve a nullable login state without changing legacy bodies', function (?bool $loggedIn): void {
+    $page = $this->tokens->mint(now: 1000, loggedIn: $loggedIn);
+    $body = decodePageToken($page->token);
+    $verified = $this->tokens->verify($page->token, 1001);
+
+    expect($page->loggedIn)->toBe($loggedIn)
+        ->and($verified?->loggedIn)->toBe($loggedIn);
+    if ($loggedIn === null) {
+        [$encodedBody] = explode('.', $page->token, 2);
+        $legacyBody = rtrim(strtr(base64_encode(json_encode([
+            'v' => 1,
+            'id' => $page->id,
+            'session' => $page->sessionToken,
+            'iat' => 1000,
+            'exp' => 1900,
+        ], JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
+        expect($body)->not->toHaveKey('li')
+            ->and(array_keys($body))->toBe(['v', 'id', 'session', 'iat', 'exp'])
+            ->and($encodedBody)->toBe($legacyBody);
+    } else {
+        expect($body['li'])->toBe($loggedIn);
+    }
+})->with(['logged in' => true, 'logged out' => false, 'not said' => null]);
+
+test('page tokens reject non-boolean and tampered login state', function (mixed $loggedIn): void {
+    $page = $this->tokens->mint(now: 1000, loggedIn: true);
+    $body = decodePageToken($page->token);
+    $body['li'] = $loggedIn;
+
+    expect($this->tokens->verify(signPageToken($body), 1001))->toBeNull();
+})->with(['integer' => 1, 'string' => 'true']);
+
+test('changing a signed page login state invalidates the token', function (): void {
+    $page = $this->tokens->mint(now: 1000, loggedIn: true);
+    [$body, $signature] = explode('.', $page->token, 2);
+    $data = decodePageToken($page->token);
+    $data['li'] = false;
+    $tamperedBody = rtrim(strtr(base64_encode(json_encode($data, JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
+
+    expect($tamperedBody)->not->toBe($body)
+        ->and($this->tokens->verify($tamperedBody.'.'.$signature, 1001))->toBeNull();
 });
 
 test('signed session cookies persist sessions but every page gets a fresh identity', function (): void {
@@ -47,6 +107,29 @@ test('records only bounded structural request metadata', function (): void {
         ->and(json_encode($payload))->not->toContain('alice', 'password', 'Authorization', $page->token);
     $this->sdk->recordPage($page, 'GET', '/people/alice@example.com?other=value');
     expect($this->dispatcher->deliveries[1]->payload['path_hash'])->toBe($payload['path_hash']);
+});
+
+test('server payloads include only an explicitly known login state', function (?bool $loggedIn): void {
+    $page = $this->sdk->page(loggedIn: $loggedIn);
+    $body = ['events' => [['request_id' => 'event_1', 'type' => 'js_probe', 'received_at' => '2026-09-08T00:00:00Z', 'payload' => ['js_passed' => true]]]];
+
+    expect($this->sdk->recordPage($page, 'GET', '/'))->toBeTrue()
+        ->and($this->sdk->forwardEvents($page->token, $body))->toBeTrue();
+    foreach ($this->dispatcher->deliveries as $delivery) {
+        if ($loggedIn === null) {
+            expect($delivery->payload)->not->toHaveKey('logged_in');
+        } else {
+            expect($delivery->payload['logged_in'])->toBe($loggedIn);
+        }
+    }
+})->with(['logged in' => true, 'logged out' => false, 'legacy token' => null]);
+
+test('proxy rejects browser-supplied login state', function (): void {
+    $page = $this->sdk->page(loggedIn: true);
+    $body = ['logged_in' => false, 'events' => [['request_id' => 'event_1', 'type' => 'js_probe', 'received_at' => '2026-09-08T00:00:00Z', 'payload' => ['js_passed' => true]]]];
+
+    expect(fn () => $this->sdk->forwardEvents($page->token, $body))->toThrow(InvalidArgumentException::class)
+        ->and($this->dispatcher->deliveries)->toBe([]);
 });
 
 test('collector markup uses the current data-endpoint contract and keeps secrets out', function (): void {

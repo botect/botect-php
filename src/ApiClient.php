@@ -17,7 +17,7 @@ final readonly class ApiClient
     /** Blocking HTTP API, used by delivery workers and explicit immediate lookups.
      * @param  array<string, string>  $context
      */
-    public function verdict(string $sessionToken, array $context = []): Verdict
+    public function verdict(string $sessionToken, array $context = [], ?bool $loggedIn = null): Verdict
     {
         foreach ($context as $key => $value) {
             if (! in_array($key, ['path', 'ip', 'country', 'ua'], true) || ! is_string($value) || strlen($value) > 2048) {
@@ -25,6 +25,9 @@ final readonly class ApiClient
             }
         }
         $path = '/sessions/'.SessionToken::validate($sessionToken).'/verdict';
+        if ($loggedIn !== null) {
+            $context['logged_in'] = $loggedIn ? '1' : '0';
+        }
         $query = http_build_query($context, '', '&', PHP_QUERY_RFC3986);
         $data = $this->request('GET', $path.($query === '' ? '' : '?'.$query));
         try {

@@ -46,6 +46,9 @@ final readonly class ForwardEventsAction
         }
         $batchKey = $idempotencyKey ?? hash('sha256', json_encode($events, JSON_THROW_ON_ERROR));
         $payload = ['schema_version' => 1, 'page_id' => $page->id, 'session_token' => $page->sessionToken, 'events' => $events];
+        if ($page->loggedIn !== null) {
+            $payload['logged_in'] = $page->loggedIn;
+        }
 
         // A plain string is the application's own answer: explicit, not inferred.
         $observed = $observedIp instanceof ClientIp ? $observedIp : ClientIp::fromString($observedIp, ClientIp::SOURCE_RESOLVER);

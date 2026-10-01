@@ -267,7 +267,29 @@ See [Verdict API](https://docs.botect.ai/endpoints/verdict) and [Score bands](ht
 
 ## Marking a visitor as logged in
 
-After your application has authenticated a visitor, schedule an assertion for their Botect session:
+With Laravel server tracking, the SDK reports `auth()->check()` automatically on
+each tracked page. That boolean is captured when the page is rendered, signed
+into its page token, and reused for the page report and every collector batch
+relayed for that page. Verdict enforcement resolves the current request's state
+separately. Browser payloads cannot supply or override this value.
+
+To use another guard or application-specific rule, name a class implementing
+`Botect\Laravel\Contracts\LoggedInResolver` in
+`botect.logged_in.resolver`. Its `loggedIn(Request $request): ?bool` method may
+return `null` to omit the state for a request. Set the configured resolver to
+`null` to turn automatic reporting off entirely.
+
+Plain PHP integrations pass the state explicitly. Null means "do not say" and
+is omitted from the request:
+
+```php
+$page = $botect->page($sessionCookie, loggedIn: $isLoggedIn);
+$cached = $botect->verdict($sessionToken, loggedIn: $isLoggedIn);
+$immediate = $botect->lookupVerdict($sessionToken, loggedIn: $isLoggedIn);
+```
+
+Applications without server tracking can continue scheduling a one-off
+assertion after authentication:
 
 ```php
 $queued = $botect->loggedIn($sessionToken);
@@ -282,6 +304,13 @@ $queued = Botect::loggedIn($sessionToken);
 ```
 
 A `true` result means the configured dispatcher accepted the assertion, not that Botect has accepted it yet. The default mode sends it after the response; spool and queue modes use their workers. The SDK invalidates the local verdict cache for that session and sends no application user ID or email address with the assertion.
+
+When upgrading the SDK in an application that uses queue delivery, restart all
+long-running queue workers (`php artisan queue:restart`, terminate Horizon, or
+replace worker containers) before new web processes enqueue work. A v0.1.6
+worker does not understand the per-request verdict state and could cache one
+legacy answer under a v0.1.7 state-specific key until the verdict TTL expires
+(10 seconds by default).
 
 See [Logged-in visitors](https://docs.botect.ai/logged-in-visitors) for how assertions interact with your rules.
 
