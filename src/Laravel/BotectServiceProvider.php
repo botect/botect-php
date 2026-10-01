@@ -101,6 +101,9 @@ final class BotectServiceProvider extends ServiceProvider
             // every tracked page and ingest request into a swallowed error.
             $this->app->make(ClientIpResolver::class);
         }
+        if ((config('botect.server_ingest_enabled') && config('botect.tracking.enabled')) || config('botect.enforcement.enabled')) {
+            LoggedInResolverFactory::resolve($this->app);
+        }
         Blade::directive('botect', static function (string $expression): string {
             $nonce = trim($expression) === '' ? 'null' : $expression;
 

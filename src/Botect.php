@@ -55,10 +55,10 @@ final readonly class Botect
     /** Explicit immediate lookup; waits up to the lookup timeout, without retries.
      * @param  array<string, string>  $context
      */
-    public function lookupVerdict(string $sessionToken, array $context = []): Verdict
+    public function lookupVerdict(string $sessionToken, array $context = [], ?bool $loggedIn = null): Verdict
     {
         try {
-            return (new ApiClient($this->configuration, $this->transport))->verdict($sessionToken, $context);
+            return (new ApiClient($this->configuration, $this->transport))->verdict($sessionToken, $context, $loggedIn);
         } catch (Throwable) {
             return new Verdict;
         }
@@ -83,9 +83,9 @@ final readonly class Botect
     /** Returns cached evidence or allow, and schedules refresh without a Botect round trip.
      * @param  array<string, string>  $context
      */
-    public function verdict(string $sessionToken, array $context = []): Verdict
+    public function verdict(string $sessionToken, array $context = [], ?bool $loggedIn = null): Verdict
     {
-        return (new GetVerdictAction($this->configuration, $this->dispatcher, $this->cache))->execute($sessionToken, $context);
+        return (new GetVerdictAction($this->configuration, $this->dispatcher, $this->cache))->execute($sessionToken, $context, $loggedIn);
     }
 
     /** True means accepted by the configured dispatcher, not confirmed by Botect. */
@@ -94,9 +94,9 @@ final readonly class Botect
         return (new AssertLoggedInAction($this->configuration, $this->dispatcher, $this->cache))->execute($sessionToken);
     }
 
-    public function page(?string $sessionCookie = null): Page
+    public function page(?string $sessionCookie = null, ?bool $loggedIn = null): Page
     {
-        return (new PageTokens($this->configuration))->mint($sessionCookie);
+        return (new PageTokens($this->configuration))->mint($sessionCookie, null, $loggedIn);
     }
 
     public function sessionCookie(Page $page): string

@@ -12,10 +12,14 @@ use Botect\Exceptions\DeliveryException;
 use Botect\Http\Response;
 use Botect\Laravel\BotectServiceProvider;
 use Botect\Laravel\Contracts\ClientIpResolver;
+use Botect\Laravel\Contracts\LoggedInResolver;
 use Botect\Laravel\Contracts\VerdictHandler;
+use Botect\Laravel\DefaultLoggedInResolver;
 use Botect\Laravel\Http\IngestController;
 use Botect\Laravel\Jobs\DeliverJob;
 use Botect\Laravel\LaravelHttpTransport;
+use Botect\Laravel\LoggedInResolverFactory;
+use Botect\Laravel\LoggedInState;
 use Botect\Laravel\Middleware\TrackPage;
 use Botect\Laravel\QueueDispatcher;
 use Botect\Operation;
@@ -38,6 +42,22 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Response as HttpResponse;
+
+final class AlwaysLoggedInResolver implements LoggedInResolver
+{
+    public function loggedIn(Request $request): ?bool
+    {
+        return true;
+    }
+}
+
+final class ThrowingLoggedInResolver implements LoggedInResolver
+{
+    public function loggedIn(Request $request): ?bool
+    {
+        throw new RuntimeException('Application auth failed.');
+    }
+}
 
 beforeEach(function (): void {
     $this->dispatcher = new FakeDispatcher;
@@ -63,8 +83,88 @@ test('tracking emits a signed HttpOnly cookie and an asynchronous sanitized page
     expect($cookies)->toHaveCount(1)->and($cookies[0]->isHttpOnly())->toBeTrue()
         ->and($cookies[0]->getSameSite())->toBe('lax')->and($response->headers->get('Cache-Control'))->toContain('no-store')
         ->and($this->dispatcher->forOperation(Operation::RecordPage))->toHaveCount(1)
+        ->and($this->dispatcher->deliveries[0]->payload['logged_in'])->toBeFalse()
         ->and(json_encode($this->dispatcher->deliveries[0]->payload))->not->toContain('alice', 'secret')
         ->and($this->transport->requests)->toBe([]);
+});
+
+test('tracking uses a configured login resolver', function (): void {
+    config([
+        'botect.server_ingest_enabled' => true,
+        'botect.tracking.enabled' => true,
+        'botect.logged_in.resolver' => AlwaysLoggedInResolver::class,
+    ]);
+    Route::get('/signed-in', fn () => response('<html><head></head><body>ok</body></html>'))->middleware('botect.track');
+
+    $this->get('/signed-in')->assertOk();
+
+    expect($this->dispatcher->forOperation(Operation::RecordPage)[0]->payload['logged_in'])->toBeTrue();
+});
+
+test('tracking omits login state when the resolver is disabled', function (): void {
+    config([
+        'botect.server_ingest_enabled' => true,
+        'botect.tracking.enabled' => true,
+        'botect.logged_in.resolver' => null,
+    ]);
+    Route::get('/unknown-state', fn () => response('<html><head></head><body>ok</body></html>'))->middleware('botect.track');
+
+    $this->get('/unknown-state')->assertOk();
+
+    expect($this->dispatcher->forOperation(Operation::RecordPage)[0]->payload)->not->toHaveKey('logged_in');
+});
+
+test('a throwing login resolver never breaks the host page', function (): void {
+    config([
+        'botect.server_ingest_enabled' => true,
+        'botect.tracking.enabled' => true,
+        'botect.logged_in.resolver' => ThrowingLoggedInResolver::class,
+    ]);
+    Route::get('/auth-unavailable', fn () => response('<html><head></head><body>ok</body></html>'))->middleware('botect.track');
+
+    $this->get('/auth-unavailable')->assertOk();
+
+    expect($this->dispatcher->forOperation(Operation::RecordPage)[0]->payload)->not->toHaveKey('logged_in');
+});
+
+test('login resolver precedence distinguishes legacy absence from explicit configuration', function (): void {
+    $request = Request::create('/');
+    expect(LoggedInResolverFactory::resolve($this->app))->toBeInstanceOf(DefaultLoggedInResolver::class)
+        ->and(LoggedInState::of($this->app, $request))->toBeFalse();
+
+    $botect = config('botect');
+    unset($botect['logged_in']);
+    config(['botect' => $botect]);
+    expect(LoggedInResolverFactory::resolve($this->app))->toBeInstanceOf(DefaultLoggedInResolver::class)
+        ->and(LoggedInState::of($this->app, $request))->toBeFalse();
+
+    $this->app->instance(LoggedInResolver::class, new AlwaysLoggedInResolver);
+    expect(LoggedInResolverFactory::resolve($this->app))->toBeInstanceOf(AlwaysLoggedInResolver::class);
+
+    config(['botect.logged_in.resolver' => null]);
+    expect(LoggedInResolverFactory::resolve($this->app))->toBeNull();
+
+    config(['botect.logged_in.resolver' => AlwaysLoggedInResolver::class]);
+    expect(LoggedInResolverFactory::resolve($this->app))->toBeInstanceOf(AlwaysLoggedInResolver::class);
+});
+
+test('invalid login resolver settings fail factory resolution but requests fail open', function (): void {
+    config(['botect.logged_in.resolver' => stdClass::class]);
+
+    expect(fn () => LoggedInResolverFactory::resolve($this->app))
+        ->toThrow(InvalidArgumentException::class, LoggedInResolver::class)
+        ->and(LoggedInState::of($this->app, Request::create('/')))->toBeNull();
+});
+
+test('provider refuses an invalid login resolver when automatic reporting is enabled', function (): void {
+    config([
+        'botect.server_ingest_enabled' => true,
+        'botect.tracking.enabled' => true,
+        'botect.logged_in.resolver' => stdClass::class,
+    ]);
+
+    expect(fn () => (new BotectServiceProvider($this->app))->boot($this->app->make(Router::class)))
+        ->toThrow(InvalidArgumentException::class, LoggedInResolver::class);
 });
 
 test('tracking skips JSON, HEAD, exclusions and disabled configurations', function (): void {
@@ -104,6 +204,26 @@ test('proxy validates tokens and JSON before queuing and rejects foreign origins
     $this->postJson('/collect?page_token='.urlencode($page->token), $body, ['Origin' => 'https://evil.example'])->assertForbidden();
     $this->postJson('/collect?page_token='.urlencode($page->token), ['secret' => 'value'])->assertUnprocessable();
     expect($this->dispatcher->deliveries)->toHaveCount(1)->and($this->transport->requests)->toBe([]);
+});
+
+test('proxy forwards only the login state signed into the page token', function (): void {
+    config(['botect.server_ingest_enabled' => true]);
+    Route::post('/collect', IngestController::class);
+    $body = ['events' => [['request_id' => 'event_1', 'type' => 'js_probe', 'received_at' => '2026-09-08T00:00:00Z', 'payload' => ['js_passed' => true]]]];
+
+    foreach ([true, false, null] as $loggedIn) {
+        $page = $this->app->make(Botect::class)->page(loggedIn: $loggedIn);
+        $this->postJson('/collect?page_token='.urlencode($page->token), $body)->assertAccepted();
+        $payload = $this->dispatcher->forOperation(Operation::ForwardEvents)[array_key_last($this->dispatcher->forOperation(Operation::ForwardEvents))]->payload;
+        if ($loggedIn === null) {
+            expect($payload)->not->toHaveKey('logged_in');
+        } else {
+            expect($payload['logged_in'])->toBe($loggedIn);
+        }
+    }
+
+    $page = $this->app->make(Botect::class)->page(loggedIn: true);
+    $this->postJson('/collect?page_token='.urlencode($page->token), ['logged_in' => false] + $body)->assertUnprocessable();
 });
 
 test('proxy rejects a cached page token sent with another visitor\'s cookie and warns once per page', function (): void {
@@ -219,7 +339,8 @@ test('enforcement fails open on cache misses and enforces cached verdicts only',
     $page = $sdk->page();
     $cookie = $sdk->sessionCookie($page);
     $this->withUnencryptedCookie('botect_server_session', $cookie)->get('/checkout')->assertOk();
-    expect($this->dispatcher->deliveries)->toHaveCount(1);
+    expect($this->dispatcher->deliveries)->toHaveCount(1)
+        ->and($this->dispatcher->deliveries[0]->payload['logged_in'])->toBeFalse();
     $this->transport->result = new Response(200, '{"verdict":"definite","score":1,"action":"block","detection_ids":[],"reason":"automation"}');
     $sdk->deliver($this->dispatcher->deliveries[0]);
     $this->withUnencryptedCookie('botect_server_session', $cookie)->get('/checkout')->assertForbidden();
@@ -238,7 +359,7 @@ test('custom challenge handler can connect a customer challenge flow', function 
     Route::get('/checkout', fn () => 'ok')->middleware('botect.enforce');
     $sdk = $this->app->make(Botect::class);
     $page = $sdk->page();
-    $sdk->verdict($page->sessionToken, ['path' => '/checkout']);
+    $sdk->verdict($page->sessionToken, ['path' => '/checkout'], false);
     $this->transport->result = new Response(200, '{"verdict":"likely_automated","score":10,"action":"challenge","detection_ids":[],"reason":"challenge"}');
     $sdk->deliver($this->dispatcher->deliveries[0]);
     $this->withUnencryptedCookie('botect_server_session', $sdk->sessionCookie($page))->get('/checkout')->assertRedirect('/challenge');

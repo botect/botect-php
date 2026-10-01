@@ -16,7 +16,11 @@ if (config('botect.delivery') === 'spool') {
     Schedule::command('botect:flush --limit=100')->everyMinute()->withoutOverlapping()->runInBackground();
 }
 
-// After successful login: Botect::loggedIn($sessionToken).
+// Tracked pages and verdict enforcement report auth()->check() automatically.
+// Replace botect.logged_in.resolver with a class implementing LoggedInResolver
+// for a custom guard or tenant rule, or set it to null to omit the state.
+// Applications without tracking can still call Botect::loggedIn($sessionToken)
+// after successful login.
 // Current collector tokens must be explicitly passed to the application by the browser.
 // Once server ingest is deployed, tracking sets a signed HttpOnly server cookie instead.
 // Resolve it with Botect::sessionToken(request()->cookie(config('botect.cookie_name'), '')).

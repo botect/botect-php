@@ -13,16 +13,20 @@ final readonly class PageTokens
 {
     public function __construct(private Configuration $configuration) {}
 
-    public function mint(?string $cookie = null, ?int $now = null): Page
+    public function mint(?string $cookie = null, ?int $now = null, ?bool $loggedIn = null): Page
     {
         $now ??= time();
         $session = $cookie === null ? null : $this->readCookie($cookie);
         $hadCookie = $session !== null;
         $session ??= SessionToken::generate();
         $id = bin2hex(random_bytes(16));
-        $body = self::encode(json_encode(['v' => 1, 'id' => $id, 'session' => $session, 'iat' => $now, 'exp' => $now + $this->configuration->pageTokenTtl], JSON_THROW_ON_ERROR));
+        $data = ['v' => 1, 'id' => $id, 'session' => $session, 'iat' => $now, 'exp' => $now + $this->configuration->pageTokenTtl];
+        if ($loggedIn !== null) {
+            $data['li'] = $loggedIn;
+        }
+        $body = self::encode(json_encode($data, JSON_THROW_ON_ERROR));
 
-        return new Page($id, $session, $body.'.'.$this->sign('page', $body), $now, $hadCookie);
+        return new Page($id, $session, $body.'.'.$this->sign('page', $body), $now, $hadCookie, $loggedIn);
     }
 
     public function verify(string $token, ?int $now = null): ?Page
@@ -36,11 +40,12 @@ final readonly class PageTokens
             $now ??= time();
             if (($data['v'] ?? null) !== 1 || ! is_int($data['iat'] ?? null) || ! is_int($data['exp'] ?? null)
                 || $data['iat'] > $now + 30 || $data['exp'] <= $now || $this->configuration->pageTokenTtl !== $data['exp'] - $data['iat']
-                || ! is_string($data['id'] ?? null) || ! preg_match('/^[a-f0-9]{32}$/D', $data['id'])) {
+                || ! is_string($data['id'] ?? null) || ! preg_match('/^[a-f0-9]{32}$/D', $data['id'])
+                || (array_key_exists('li', $data) && ! is_bool($data['li']))) {
                 return null;
             }
 
-            return new Page($data['id'], SessionToken::validate($data['session']), $token, $data['iat']);
+            return new Page($data['id'], SessionToken::validate($data['session']), $token, $data['iat'], loggedIn: $data['li'] ?? null);
         } catch (Throwable) {
             return null;
         }

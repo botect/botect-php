@@ -4,6 +4,17 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
+## v0.1.7 — 2026-10-01
+
+### Added
+
+- Laravel can report whether the visitor is authenticated with every tracked page, relayed event batch and verdict request. The default resolver uses `auth()->check()` and can be replaced with a class implementing `LoggedInResolver` or disabled. Plain PHP callers can pass the same nullable state to `page()`, `verdict()` and `lookupVerdict()`.
+
+### Changed
+
+- Page tokens can carry the server-resolved login state, and verdict cache entries now distinguish signed-in, signed-out and unspecified requests.
+- Applications using queue delivery must restart long-running queue workers when upgrading so old workers do not process state-aware verdict refreshes as legacy requests.
+
 ## v0.1.6 — 2026-09-16
 
 ### Changed

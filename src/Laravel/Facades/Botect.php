@@ -11,9 +11,10 @@ use Botect\Testing\FakeDispatcher;
 use Illuminate\Support\Facades\Facade;
 
 /**
- * @method static \Botect\Verdict verdict(string $sessionToken, array $context = [])
- * @method static \Botect\Verdict lookupVerdict(string $sessionToken, array $context = [])
+ * @method static \Botect\Verdict verdict(string $sessionToken, array $context = [], ?bool $loggedIn = null)
+ * @method static \Botect\Verdict lookupVerdict(string $sessionToken, array $context = [], ?bool $loggedIn = null)
  * @method static bool loggedIn(string $sessionToken)
+ * @method static \Botect\Page page(?string $sessionCookie = null, ?bool $loggedIn = null)
  * @method static string collector(?\Botect\Page $page = null, ?string $cspNonce = null)
  * @method static ?string sessionToken(string $cookie)
  *

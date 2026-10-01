@@ -59,6 +59,9 @@ final readonly class RecordPageAction
                 'duration_ms' => max(0, min(86400000, $durationMs)),
                 'ja4' => null,
             ];
+            if ($page->loggedIn !== null) {
+                $payload['logged_in'] = $page->loggedIn;
+            }
 
             // A plain string is the application's own answer: explicit, not inferred.
             $observed = $observedIp instanceof ClientIp ? $observedIp : ClientIp::fromString($observedIp, ClientIp::SOURCE_RESOLVER);

@@ -24,7 +24,8 @@ final readonly class DeliverAction
             throw DeliveryException::expired(time() - $delivery->createdAt, self::MAX_AGE_SECONDS);
         }
         if ($delivery->operation === Operation::RefreshVerdict) {
-            $verdict = $this->client->verdict($delivery->sessionToken, $delivery->payload['context']);
+            $loggedIn = $delivery->payload['logged_in'] ?? null;
+            $verdict = $this->client->verdict($delivery->sessionToken, $delivery->payload['context'], is_bool($loggedIn) ? $loggedIn : null);
             if ($verdict->available()) {
                 $this->cache->put($delivery->payload['cache_key'], $verdict, $this->configuration->verdictTtl);
             }

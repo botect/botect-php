@@ -16,7 +16,10 @@ $botect = Botect::create(new Configuration(
 // localStorage: pass it explicitly to your server when calling verdict() or loggedIn().
 echo $botect->collector();
 
-// $verdict = $botect->lookupVerdict($sessionToken); // Explicit immediate read, with a timeout.
+// Server-tracking integrations pass their own login state when minting the page:
+// $page = $botect->page($sessionCookie, loggedIn: $isLoggedIn); // null means do not say.
+// $cached = $botect->verdict($sessionToken, loggedIn: $isLoggedIn);
+// $verdict = $botect->lookupVerdict($sessionToken, loggedIn: $isLoggedIn); // Immediate, with a timeout.
 // $queued = $botect->loggedIn($sessionToken); // No email, user ID, or request body.
 // Writes send after response completion on PHP-FPM. No retries; non-FPM shutdown may delay the response.
 // Optional: select delivery: "spool" and a private storageDirectory to use examples/worker.php.

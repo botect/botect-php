@@ -42,6 +42,52 @@ test('cached verdicts are scoped by request context and refreshed asynchronously
         ->and($this->transport->requests[0]['url'])->toBe('https://api.botect.ai/v1/sessions/sess_test/verdict?path=%2Fcheckout');
 });
 
+test('verdict state separates cache keys and refresh payloads while preserving the legacy key', function (): void {
+    foreach ([null, false, true] as $loggedIn) {
+        $this->sdk->verdict('sess_state', ['path' => '/checkout'], $loggedIn);
+    }
+    [$legacy, $loggedOut, $loggedIn] = $this->dispatcher->deliveries;
+    $legacyKey = hash('sha256', $this->config->namespace().'|sess_state|0|'.json_encode(['path' => '/checkout'], JSON_THROW_ON_ERROR));
+
+    expect($legacy->payload['cache_key'])->toBe($legacyKey)
+        ->and($legacy->payload)->not->toHaveKey('logged_in')
+        ->and($loggedOut->payload['logged_in'])->toBeFalse()
+        ->and($loggedIn->payload['logged_in'])->toBeTrue()
+        ->and(array_unique(array_column([$legacy->payload, $loggedOut->payload, $loggedIn->payload], 'cache_key')))->toHaveCount(3)
+        ->and([$legacy->id, $loggedOut->id, $loggedIn->id])->toHaveCount(3)
+        ->and($legacy->id)->not->toBe($loggedOut->id)
+        ->and($loggedOut->id)->not->toBe($loggedIn->id);
+});
+
+test('immediate verdict URLs include only an explicitly known login state', function (?bool $loggedIn, string $suffix): void {
+    $this->transport->result = new Response(200, '{"verdict":"not_computed","score":0,"action":"allow","detection_ids":[],"reason":"Not computed"}');
+    $this->sdk->lookupVerdict('sess_lookup', ['path' => '/checkout'], $loggedIn);
+
+    expect($this->transport->requests[0]['url'])->toBe('https://api.botect.ai/v1/sessions/sess_lookup/verdict?path=%2Fcheckout'.$suffix);
+})->with([
+    'logged in' => [true, '&logged_in=1'],
+    'logged out' => [false, '&logged_in=0'],
+    'not said' => [null, ''],
+]);
+
+test('refresh delivery forwards only a boolean login state', function (mixed $loggedIn, string $suffix): void {
+    $payload = ['context' => ['path' => '/checkout'], 'cache_key' => str_repeat('a', 64)];
+    if ($loggedIn !== '__absent__') {
+        $payload['logged_in'] = $loggedIn;
+    }
+    $delivery = Delivery::make(Operation::RefreshVerdict, 'sess_refresh', $payload);
+    $this->transport->result = new Response(200, '{"verdict":"not_computed","score":0,"action":"allow","detection_ids":[],"reason":"Not computed"}');
+
+    $this->sdk->deliver($delivery);
+
+    expect($this->transport->requests[0]['url'])->toBe('https://api.botect.ai/v1/sessions/sess_refresh/verdict?path=%2Fcheckout'.$suffix);
+})->with([
+    'logged in' => [true, '&logged_in=1'],
+    'logged out' => [false, '&logged_in=0'],
+    'legacy delivery' => ['__absent__', ''],
+    'invalid queued value' => [1, ''],
+]);
+
 test('a login invalidates cached verdicts and in-flight pre-login refreshes', function (): void {
     $this->sdk->verdict('sess_test');
     $old = $this->dispatcher->deliveries[0];
