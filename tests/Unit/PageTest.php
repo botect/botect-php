@@ -5,6 +5,7 @@ use Botect\Botect;
 use Botect\Collector;
 use Botect\Configuration;
 use Botect\Exceptions\SessionMismatchException;
+use Botect\Http\Response;
 use Botect\Support\PageTokens;
 use Botect\Testing\ArrayVerdictCache;
 use Botect\Testing\FakeDispatcher;
@@ -215,3 +216,67 @@ test('forwards only an explicitly supplied server observation IP', function (): 
     $body['observed_ip'] = '203.0.113.99';
     expect(fn () => $this->sdk->forwardEvents($page->token, $body))->toThrow(InvalidArgumentException::class);
 });
+
+test('relay timestamps preserve microseconds, convert to UTC, and do not change batch identity', function (?string $key): void {
+    $page = $this->sdk->page();
+    $body = json_decode(file_get_contents(__DIR__.'/../Fixtures/collector-1.5.0.json'), true, 32, JSON_THROW_ON_ERROR);
+    $body['site_key'] = 'pk_test';
+    $legacyEvents = $body['events'];
+    foreach ($legacyEvents as &$event) {
+        unset($event['payload']['page_path_shape']);
+    }
+    unset($event);
+    $batchKey = $key ?? hash('sha256', json_encode($legacyEvents, JSON_THROW_ON_ERROR));
+    $expectedId = hash('sha256', 'forward_events|'.$page->id.'|'.$batchKey);
+    $first = new DateTimeImmutable('2026-10-25T08:00:00.123456-04:00');
+    $second = new DateTimeImmutable('2026-10-25T12:01:00.654321Z');
+    $this->sdk->forwardEvents($page->token, $body, $key, relayedAt: $first);
+    foreach ($body['events'] as &$event) {
+        $event['sent_at'] = $event['received_at'];
+        unset($event['received_at']);
+    }
+    unset($event);
+    $this->sdk->forwardEvents($page->token, $body, $key, relayedAt: $second);
+    foreach ($this->dispatcher->deliveries as $index => $delivery) {
+        expect($delivery->id)->toBe($expectedId);
+        foreach ($delivery->payload['events'] as $eventIndex => $event) {
+            expect($event['sent_at'])->toBe($legacyEvents[$eventIndex]['received_at'])
+                ->and($event['relayed_at'])->toBe($index === 0 ? '2026-10-25T12:00:00.123456Z' : '2026-10-25T12:01:00.654321Z')
+                ->and($event)->not->toHaveKey('received_at');
+        }
+    }
+})->with(['fallback' => null, 'explicit' => 'batch_1']);
+
+test('plain PHP captures relay time before deferred dispatch and sends it unchanged', function (): void {
+    $transport = new FakeTransport;
+    $transport->result = new Response(204, '');
+    $sdk = Botect::create($this->config, transport: $transport);
+    $page = $sdk->page();
+    $before = new DateTimeImmutable;
+    expect($sdk->forwardEvents($page->token, ['events' => [
+        ['request_id' => 'e1', 'type' => 'page', 'received_at' => '2026-01-01T00:00:00Z'],
+    ]]))->toBeTrue();
+    $after = new DateTimeImmutable;
+    expect($transport->requests)->toBe([]);
+    expect($sdk->sendPending()->sent)->toBe(1);
+    $event = json_decode($transport->requests[0]['body'], true, 32, JSON_THROW_ON_ERROR)['events'][0];
+    $relay = new DateTimeImmutable($event['relayed_at']);
+    expect($event['relayed_at'])->toMatch('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/D')
+        ->and($relay >= $before && $relay <= $after)->toBeTrue()
+        ->and($event['sent_at'])->toBe('2026-01-01T00:00:00Z');
+});
+
+test('server relay timestamps obey inclusive fixed bounds without clamping', function (string $timestamp, bool $accepted): void {
+    $body = ['events' => [['request_id' => 'e1', 'type' => 'page', 'sent_at' => '2026-01-01T00:00:00Z']]];
+    $page = $this->sdk->page();
+    if ($accepted) {
+        expect($this->sdk->forwardEvents($page->token, $body, relayedAt: new DateTimeImmutable($timestamp)))->toBeTrue();
+        expect(new DateTimeImmutable($this->dispatcher->deliveries[0]->payload['events'][0]['relayed_at']))->toEqual(new DateTimeImmutable($timestamp));
+    } else {
+        expect(fn () => $this->sdk->forwardEvents($page->token, $body, relayedAt: new DateTimeImmutable($timestamp)))->toThrow(InvalidArgumentException::class)
+            ->and($this->dispatcher->deliveries)->toBe([]);
+    }
+})->with([
+    ['1970-01-02T00:00:00Z', true], ['2038-01-18T00:00:00Z', true],
+    ['1970-01-01T23:59:59.999999Z', false], ['2038-01-18T00:00:00.000001Z', false],
+]);

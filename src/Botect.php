@@ -19,6 +19,7 @@ use Botect\Storage\FileSpool;
 use Botect\Storage\FileVerdictCache;
 use Botect\Storage\MemoryVerdictCache;
 use Botect\Support\PageTokens;
+use DateTimeImmutable;
 use InvalidArgumentException;
 use LogicException;
 use Throwable;
@@ -123,11 +124,13 @@ final readonly class Botect
      * token throws SessionMismatchException; null or an unverifiable cookie
      * skips the comparison.
      *
+     * `$relayedAt` is a server-captured receipt time; defaults to action entry.
+     *
      * @param  array<string, mixed>  $body
      */
-    public function forwardEvents(string $pageToken, array $body, ?string $idempotencyKey = null, ?string $sessionCookie = null, ClientIp|string|null $observedIp = null): bool
+    public function forwardEvents(string $pageToken, array $body, ?string $idempotencyKey = null, ?string $sessionCookie = null, ClientIp|string|null $observedIp = null, ?DateTimeImmutable $relayedAt = null): bool
     {
-        return (new ForwardEventsAction($this->configuration, $this->dispatcher, new PageTokens($this->configuration)))->execute($pageToken, $body, $idempotencyKey, $sessionCookie, $observedIp);
+        return (new ForwardEventsAction($this->configuration, $this->dispatcher, new PageTokens($this->configuration)))->execute($pageToken, $body, $idempotencyKey, $sessionCookie, $observedIp, $relayedAt);
     }
 
     public function collector(?Page $page = null, ?string $cspNonce = null): string

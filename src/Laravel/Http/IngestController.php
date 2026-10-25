@@ -7,6 +7,8 @@ namespace Botect\Laravel\Http;
 use Botect\Botect;
 use Botect\Exceptions\SessionMismatchException;
 use Botect\Laravel\ClientIp\ClientIpResolverFactory;
+use DateTimeImmutable;
+use DateTimeZone;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
@@ -18,6 +20,7 @@ final class IngestController
 {
     public function __invoke(Request $request): JsonResponse
     {
+        $relayedAt = new DateTimeImmutable('now', new DateTimeZone('UTC'));
         try {
             if (! config('botect.server_ingest_enabled')) {
                 return response()->json([], 404);
@@ -37,7 +40,7 @@ final class IngestController
             if (! is_array($body) || ! is_string($token)) {
                 throw new InvalidArgumentException('Invalid payload.');
             }
-            $queued = app(Botect::class)->forwardEvents($token, $body, $request->header('Idempotency-Key'), app(VisitorSessionCookie::class)->read($request), ClientIpResolverFactory::resolve(app())->resolve($request));
+            $queued = app(Botect::class)->forwardEvents($token, $body, $request->header('Idempotency-Key'), app(VisitorSessionCookie::class)->read($request), ClientIpResolverFactory::resolve(app())->resolve($request), relayedAt: $relayedAt);
 
             return response()->json(['queued' => $queued], $queued ? 202 : 503, ['Cache-Control' => 'no-store']);
         } catch (SessionMismatchException $exception) {

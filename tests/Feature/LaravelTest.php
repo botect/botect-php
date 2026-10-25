@@ -722,3 +722,98 @@ test('a permanent delivery failure fails the job on its first attempt without a 
     $job->assertFailedWith(DeliveryException::class);
     expect($job->job->failedWith->retryable)->toBeFalse();
 });
+
+test('422 job failures expose sanitized field names at warning level without retrying', function (): void {
+    $logger = new FakeLogger;
+    $this->app->instance(LoggerInterface::class, $logger);
+    config(['botect.server_ingest_enabled' => true]);
+    $this->transport->result = new Response(422, json_encode([
+        'message' => 'secret top level', 'details' => [
+            'events.0.sent_at' => ['secret value sess_private sk_secret'],
+            "events.0.payload\nsecret" => ['other secret'], 'sk_private' => ['secret'],
+        ],
+    ], JSON_THROW_ON_ERROR));
+    $job = (new DeliverJob(Delivery::make(Operation::ForwardEvents, 'sess_test', [])))->withFakeQueueInteractions();
+    $job->handle($this->app->make(Botect::class));
+    $job->assertNotReleased();
+    $job->assertFailedWith(DeliveryException::class);
+    $exception = $job->job->failedWith;
+    expect($exception->retryable)->toBeFalse()->and($exception->status)->toBe(422);
+    // Fake queue interactions record fail(); invoke the real final callback explicitly.
+    $job->failed($exception);
+    expect($logger->records)->toHaveCount(1)
+        ->and($logger->records[0][0])->toBe('warning')
+        ->and($logger->records[0][1])->toBe('Botect background delivery failed.')
+        ->and($logger->records[0][2]['validation_fields'])->toBe(['events.0.sent_at'])
+        ->and($logger->records[0][2]['reason'])->toContain('Invalid fields: events.0.sent_at.')
+        ->and(json_encode($logger->records))->not->toContain('secret', 'sess_private', 'sk_private');
+});
+
+test('failed callbacks have empty validation fields for absent or unrelated exceptions', function (?Throwable $exception): void {
+    $this->app->instance(LoggerInterface::class, $logger = new FakeLogger);
+    (new DeliverJob(Delivery::make(Operation::AssertLoggedIn, 'sess_test')))->failed($exception);
+    expect($logger->records[0][2]['validation_fields'])->toBe([]);
+})->with([null, new RuntimeException('Unrelated'), new DeliveryException(true, 503)]);
+
+test('ingest captures relay time before resolving the visitor address', function (): void {
+    config(['botect.server_ingest_enabled' => true]);
+    $resolver = new class implements ClientIpResolver
+    {
+        public ?DateTimeImmutable $resolvedAt = null;
+
+        public function resolve(Request $request): ?ClientIp
+        {
+            $this->resolvedAt = new DateTimeImmutable;
+            usleep(10000);
+
+            return null;
+        }
+    };
+    $this->app->instance(ClientIpResolver::class, $resolver);
+    $page = app(Botect::class)->page();
+    $request = Request::create('/collect?page_token='.urlencode($page->token), 'POST', server: ['CONTENT_TYPE' => 'application/json'], content: json_encode([
+        'events' => [
+            ['request_id' => 'e1', 'type' => 'page', 'received_at' => '2026-01-01T00:00:00Z'],
+            ['request_id' => 'e2', 'type' => 'page', 'sent_at' => '2026-01-01T00:00:01Z'],
+        ],
+    ], JSON_THROW_ON_ERROR));
+    $before = new DateTimeImmutable;
+    expect(app(IngestController::class)($request)->getStatusCode())->toBe(202);
+    $events = $this->dispatcher->forOperation(Operation::ForwardEvents)[0]->payload['events'];
+    $relay = new DateTimeImmutable($events[0]['relayed_at']);
+    expect($relay >= $before && $relay <= $resolver->resolvedAt)->toBeTrue()
+        ->and($events[0]['relayed_at'])->toMatch('/\.\d{6}Z$/D')
+        ->and($events[1]['relayed_at'])->toBe($events[0]['relayed_at'])
+        ->and($events[0]['sent_at'])->toBe('2026-01-01T00:00:00Z')
+        ->and($this->transport->requests)->toBe([]);
+});
+
+test('serialized event jobs deliver legacy and stamped payloads unchanged across retries', function (bool $legacy): void {
+    config(['botect.server_ingest_enabled' => true]);
+    $sdk = app(Botect::class);
+    $page = $sdk->page();
+    $sdk->forwardEvents($page->token, ['events' => [
+        ['request_id' => 'e1', 'type' => 'page', 'received_at' => '2026-01-01T00:00:00.123Z'],
+    ]], relayedAt: new DateTimeImmutable('2026-10-25T12:00:00.123456Z'));
+    $delivery = $this->dispatcher->deliveries[0];
+    if ($legacy) {
+        $payload = $delivery->payload;
+        $payload['events'][0] = ['request_id' => 'e1', 'type' => 'page', 'received_at' => '2026-01-01T00:00:00.123Z', 'payload' => []];
+        $delivery = new Delivery($delivery->operation, $delivery->sessionToken, $payload, $delivery->id, $delivery->createdAt);
+    }
+    $job = unserialize(serialize(new DeliverJob($delivery)));
+    expect($job->delivery->toArray())->toBe($delivery->toArray());
+    $job->withFakeQueueInteractions();
+    $this->transport->result = new Response(503, '');
+    $job->handle($sdk);
+    $job->assertReleased(2);
+    $job = unserialize(serialize(new DeliverJob($job->delivery)));
+    $this->transport->result = new Response(204, '');
+    $job->handle($sdk);
+    expect($job->delivery->toArray())->toBe($delivery->toArray())
+        ->and($this->transport->requests)->toHaveCount(2);
+    foreach ($this->transport->requests as $request) {
+        expect(json_decode($request['body'], true, 32, JSON_THROW_ON_ERROR))->toBe($delivery->payload)
+            ->and($request['headers']['Idempotency-Key'])->toBe($delivery->id);
+    }
+})->with(['v0.1.7' => true, 'stamped' => false]);

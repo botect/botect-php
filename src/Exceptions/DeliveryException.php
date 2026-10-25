@@ -9,16 +9,30 @@ use Throwable;
 
 final class DeliveryException extends RuntimeException
 {
+    /** @var list<string> */
+    public readonly array $validationFields;
+
     /**
+     * @param  list<string>  $validationFields
      * @param  Throwable|null  $previous  the transport or decoding error behind a failure,
      *                                    kept as the cause and summarised in the message so an error tracker shows
      *                                    a connect timeout, a read timeout and a DNS failure as different things
      */
-    public function __construct(public readonly bool $retryable, public readonly int $status = 0, ?Throwable $previous = null, ?string $message = null)
+    public function __construct(public readonly bool $retryable, public readonly int $status = 0, ?Throwable $previous = null, ?string $message = null, array $validationFields = [])
     {
         $message ??= $status === 0 ? 'Botect transport or response failure.' : 'Botect delivery returned HTTP '.$status.'.';
         if ($previous !== null && $previous->getMessage() !== '') {
             $message .= ' Cause: '.self::redact($previous->getMessage());
+        }
+        $fields = array_filter($validationFields, static fn ($field): bool => is_string($field)
+            && strlen($field) <= 128
+            && preg_match('/^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|\*)(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|\*))*$/D', $field) === 1
+            && preg_match('/(?:sess_|sk_|pk_|bt_)[A-Za-z0-9_-]+/i', $field) !== 1);
+        $fields = array_values(array_unique($fields));
+        sort($fields, SORT_STRING);
+        $this->validationFields = array_slice($fields, 0, 100);
+        if ($this->validationFields !== []) {
+            $message .= ' Invalid fields: '.implode(', ', $this->validationFields).'.';
         }
         parent::__construct($message, 0, $previous);
     }

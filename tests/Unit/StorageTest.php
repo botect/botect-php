@@ -1,11 +1,16 @@
 <?php
 
 declare(strict_types=1);
+use Botect\Botect;
+use Botect\Configuration;
 use Botect\Delivery;
 use Botect\Exceptions\DeliveryException;
+use Botect\Http\Response;
 use Botect\Operation;
 use Botect\Storage\FileSpool;
 use Botect\Storage\FileVerdictCache;
+use Botect\Testing\ArrayVerdictCache;
+use Botect\Tests\FakeTransport;
 use Botect\Verdict;
 
 beforeEach(function (): void {
@@ -73,3 +78,35 @@ test('cache does not enforce expired evidence and invalidation persists across i
     $cache->invalidate('sess_test');
     expect((new FileVerdictCache($this->directory))->generation('sess_test'))->toBe($cache->generation('sess_test'))->not->toBe('0');
 });
+
+test('spooled legacy and new event payloads survive reconstruction, retries, and delivery unchanged', function (bool $legacy): void {
+    $event = ['request_id' => 'e1', 'type' => 'page', 'payload' => []];
+    if ($legacy) {
+        $event['received_at'] = '2026-01-01T00:00:00.123Z';
+    } else {
+        $event['sent_at'] = '2026-01-01T00:00:00.123Z';
+        $event['relayed_at'] = '2026-10-25T12:00:00.123456Z';
+    }
+    $data = ['operation' => 'forward_events', 'session_token' => 'sess_test', 'payload' => [
+        'schema_version' => 1, 'page_id' => str_repeat('c', 32), 'session_token' => 'sess_test', 'events' => [$event],
+    ], 'id' => str_repeat('b', 64), 'created_at' => time() - 2];
+    $delivery = Delivery::fromArray($data);
+    $spool = new FileSpool($this->directory);
+    expect($delivery->toArray())->toBe($data)->and($spool->dispatch($delivery))->toBeTrue();
+    $transport = new FakeTransport;
+    $transport->result = new Response(503, '');
+    $sdk = new Botect(new Configuration('pk_test', 'sk_secret', serverIngestEnabled: true), $spool, new ArrayVerdictCache, $transport);
+    expect($spool->flush($sdk->deliver(...))->retried)->toBe(1);
+    $path = $this->directory.'/'.$delivery->id.'.json';
+    $stored = json_decode(file_get_contents($path), true, 32, JSON_THROW_ON_ERROR);
+    expect($stored['delivery'])->toBe($data);
+    $stored['available_at'] = time() - 1;
+    file_put_contents($path, json_encode($stored, JSON_THROW_ON_ERROR));
+    $transport->result = new Response(204, '');
+    expect((new FileSpool($this->directory))->flush($sdk->deliver(...))->sent)->toBe(1)
+        ->and($transport->requests)->toHaveCount(2);
+    foreach ($transport->requests as $request) {
+        expect(json_decode($request['body'], true, 32, JSON_THROW_ON_ERROR))->toBe($data['payload'])
+            ->and($request['headers']['Idempotency-Key'])->toBe($data['id']);
+    }
+})->with(['v0.1.7' => true, 'stamped' => false]);
