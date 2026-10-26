@@ -4,6 +4,8 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
+## v0.1.8 — 2026-10-26
+
 ### Added
 
 - HTTP 422 delivery failures expose sanitized failing field names in `DeliveryException::$validationFields`, its message, and Laravel's final warning context as `validation_fields`. Response values and validation messages remain private; retryability and log severity are unchanged.
@@ -12,7 +14,7 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 ### Changed
 
 - Browser event forwarding accepts `sent_at` and legacy `received_at`, requires equal instants when both are supplied, and forwards only `sent_at`. Both aliases require strict UTC syntax and the inclusive fixed bounds `1970-01-02T00:00:00Z` through `2038-01-18T00:00:00Z`, without a recency window or timestamp clamping.
-- Deploy Botect API v0.9.6 before this SDK release; switch the collector to `sent_at` separately after customers upgrade. Restart long-running queue workers during the SDK upgrade. Already serialized v0.1.7 queue/spool payloads remain unchanged, without fabricated relay timestamps. Delivery IDs, retry behavior, and the one-hour delivery lifetime are preserved.
+- Requires the Botect API release that accepts `sent_at` and `relayed_at` (live since 26 Oct 2026); switch the collector to `sent_at` separately after customers upgrade. Restart long-running queue workers during the SDK upgrade. Already serialized v0.1.7 queue/spool payloads remain unchanged, without fabricated relay timestamps. Delivery IDs, retry behavior, and the one-hour delivery lifetime are preserved.
 
 ## v0.1.7 — 2026-10-01
 
