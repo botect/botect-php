@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Botect\Support;
 
+use DateMalformedStringException;
 use DateTimeImmutable;
 use InvalidArgumentException;
 
@@ -29,16 +30,34 @@ final class EventBatch
         }
         $events = [];
         foreach ($body['events'] as $event) {
-            if (! is_array($event) || array_diff(array_keys($event), ['request_id', 'type', 'received_at', 'payload']) !== []
+            if (! is_array($event) || array_diff(array_keys($event), ['request_id', 'type', 'received_at', 'sent_at', 'payload']) !== []
                 || ! is_string($event['request_id'] ?? null) || ! preg_match('/^[A-Za-z0-9_-]{1,128}$/D', $event['request_id'])
                 || ! in_array($event['type'] ?? null, ['mouse', 'scroll', 'visibility', 'first_input', 'js_probe', 'page', 'snapshot'], true)
-                || ! is_string($event['received_at'] ?? null) || ! preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/D', $event['received_at'])) {
+                || (! array_key_exists('sent_at', $event) && ! array_key_exists('received_at', $event))) {
                 throw new InvalidArgumentException('Invalid event.');
             }
-            new DateTimeImmutable($event['received_at']);
-            $dateErrors = DateTimeImmutable::getLastErrors();
-            if (is_array($dateErrors) && ($dateErrors['warning_count'] > 0 || $dateErrors['error_count'] > 0)) {
-                throw new InvalidArgumentException('Invalid event timestamp.');
+            $timestamps = [];
+            foreach (['sent_at', 'received_at'] as $key) {
+                if (! array_key_exists($key, $event)) {
+                    continue;
+                }
+                if (! is_string($event[$key]) || ! preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/D', $event[$key])) {
+                    throw new InvalidArgumentException('Invalid event timestamp.');
+                }
+                try {
+                    $timestamps[$key] = new DateTimeImmutable($event[$key]);
+                } catch (DateMalformedStringException) {
+                    throw new InvalidArgumentException('Invalid event timestamp.');
+                }
+                $dateErrors = DateTimeImmutable::getLastErrors();
+                if ((is_array($dateErrors) && ($dateErrors['warning_count'] > 0 || $dateErrors['error_count'] > 0))
+                    || $timestamps[$key] < new DateTimeImmutable('1970-01-02T00:00:00Z')
+                    || $timestamps[$key] > new DateTimeImmutable('2038-01-18T00:00:00Z')) {
+                    throw new InvalidArgumentException('Invalid event timestamp.');
+                }
+            }
+            if (count($timestamps) === 2 && $timestamps['sent_at'] != $timestamps['received_at']) {
+                throw new InvalidArgumentException('Event timestamps must name the same instant.');
             }
             $payload = $event['payload'] ?? [];
             if (! is_array($payload) || strlen(json_encode($payload, JSON_THROW_ON_ERROR)) > 65536) {
@@ -62,7 +81,7 @@ final class EventBatch
             }
             // A path shape is a convenience, not evidence worth retaining raw segments for.
             unset($payload['page_path_shape']);
-            $events[] = ['request_id' => $event['request_id'], 'type' => $event['type'], 'received_at' => $event['received_at'], 'payload' => $payload];
+            $events[] = ['request_id' => $event['request_id'], 'type' => $event['type'], 'sent_at' => $event['sent_at'] ?? $event['received_at'], 'payload' => $payload];
         }
 
         return $events;

@@ -76,6 +76,7 @@ final class DeliverJob implements ShouldBeUnique, ShouldQueue
             'exception' => $exception === null ? null : $exception::class,
             'reason' => $exception?->getMessage(),
             'status' => $exception instanceof DeliveryException ? $exception->status : null,
+            'validation_fields' => $exception instanceof DeliveryException ? $exception->validationFields : [],
             'retryable' => $exception instanceof DeliveryException ? $exception->retryable : null,
         ]);
     }

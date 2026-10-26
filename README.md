@@ -343,6 +343,53 @@ Tracking injects the collector automatically. If you render `@botect` yourself, 
 
 Rebuild Laravel's configuration and route caches after changing the server-ingest setting, the tracking settings, or the ingest path.
 
+### Forwarded event timestamps and validation failures
+
+Server event forwarding requires Botect API v0.9.6 or later. Deploy that API before
+upgrading this SDK; the collector's switch to `sent_at` is a separate later rollout
+after customers upgrade the SDK.
+
+`forwardEvents()` accepts per-event `sent_at` or legacy `received_at` from the
+collector and forwards the browser time as `sent_at` only, preserving its
+precision. At least one is required. If both are supplied, both must be valid and
+name the same instant. Timestamps must use UTC `YYYY-MM-DDTHH:MM:SSZ` with an
+optional 1–6 digit fractional part before `Z`, and fall within the inclusive bounds
+`1970-01-02T00:00:00Z` through `2038-01-18T00:00:00Z`. There is no recency window;
+invalid timestamps reject the batch without dropping or clamping individual events.
+
+Every forwarded event also carries the same `relayed_at`: your server's receipt
+time in UTC with six fractional digits. Laravel captures it at ingest-controller
+entry. Plain PHP defaults to entry into the forwarding action. A plain-PHP handler
+can capture an earlier receipt time and pass it as the optional sixth argument:
+
+```php
+$relayedAt = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+// Decode and validate the request using your application's normal handler.
+$queued = $botect->forwardEvents(
+    $pageToken,
+    $body,
+    sessionCookie: $sessionCookie,
+    relayedAt: $relayedAt,
+);
+```
+
+Supply this timestamp from your server, never from browser input or headers.
+Browser-supplied `relayed_at` is rejected. Relay timestamps obey the same fixed
+bounds; retries reuse the captured timestamp. The existing one-hour delivery
+lifetime is unchanged.
+
+HTTP 422 delivery failures expose sanitized failing field names through
+`DeliveryException::$validationFields` and the exception message. Laravel's final
+failure warning includes `validation_fields`. Response values and validation
+messages are never included; malformed responses leave the list empty. HTTP 422
+remains non-retryable and the log level remains warning.
+
+Restart long-running queue workers when upgrading. Already queued or spooled
+v0.1.7 deliveries keep their original payload, ID, and creation time; the API
+accepts their legacy `received_at`. Missing historical `relayed_at` is omitted
+rather than reconstructed at delivery time. Newly captured timestamps persist
+through queue and spool retries.
+
 ### Which address is reported
 
 Page hits and forwarded events carry the visitor's IP address as your server observed it (`observed_ip`), so Botect can attribute what it sees to the network a request really came from. Getting that address right matters: behind a CDN, load balancer or container overlay network the raw connection comes from the proxy, and reporting that would make every visitor look like one.
@@ -359,7 +406,7 @@ The SDK never sends a private or reserved address. What it sends otherwise is de
 
 `auto` is a guess, and Botect treats guessed addresses accordingly: the events are still scored, but the address is kept for diagnostics only. It is never used for IP-based signals, never becomes the session's address, and cannot get an address listed for enforcement. Botect's dashboard shows a warning while a project's deliveries arrive with guessed or missing addresses. When `auto` has to guess, the SDK logs one warning naming the header it used and the setting that would make it explicit. A named header is only safe if the proxy in front of you overwrites it on every request; a header a client can set itself lets anyone report any address.
 
-Plain PHP applications pass the address as the last argument to `recordPage()` and `forwardEvents()`, either as a string or as a `Botect\ClientIp`. A string counts as explicit.
+Plain PHP applications pass the address as the last argument to `recordPage()` or the fifth argument (`observedIp`) to `forwardEvents()`, either as a string or as a `Botect\ClientIp`. A string counts as explicit.
 
 ### Tracking only some routes
 

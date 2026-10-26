@@ -51,3 +51,32 @@ test('the curl transport reports why the connection failed', function (): void {
             ->and($exception->getMessage())->toContain('Cause: ');
     }
 });
+
+test('validation fields are sanitized before storing or rendering', function (): void {
+    $exception = new DeliveryException(false, 422, validationFields: [
+        'events.2.sent_at', 'events.0.payload.mouse_moves', 'events.2.sent_at', 'events.*.sent_at',
+        "events.0.sent_at\nsecret", 'alice@example.com', 'session.sess_private', 'sk_secret', 'pk_secret', 'bt_private',
+        '', 'events..sent_at', str_repeat('x', 129), 42, null,
+    ]);
+    expect($exception->validationFields)->toBe(['events.*.sent_at', 'events.0.payload.mouse_moves', 'events.2.sent_at'])
+        ->and($exception->getMessage())->toBe('Botect delivery returned HTTP 422. Invalid fields: events.*.sent_at, events.0.payload.mouse_moves, events.2.sent_at.')
+        ->and($exception->getPrevious())->toBeNull();
+});
+
+test('validation field limits sort and deduplicate before capping', function (): void {
+    $fields = array_map(fn (int $i): string => 'events.'.$i.'.sent_at', range(0, 120));
+    $fields[] = str_repeat('x', 128);
+    $expected = $fields;
+    sort($expected, SORT_STRING);
+    $exception = new DeliveryException(false, 422, validationFields: array_reverse([...$fields, ...$fields]));
+    expect($exception->validationFields)->toBe(array_slice($expected, 0, 100));
+    expect((new DeliveryException(false, 422, validationFields: [str_repeat('x', 128)]))->validationFields)->toBe([str_repeat('x', 128)]);
+});
+
+test('legacy constructor arguments and custom messages remain compatible', function (): void {
+    $cause = new RuntimeException('timeout sess_private');
+    $exception = new DeliveryException(true, 0, $cause, 'Custom failure.');
+    expect($exception->getMessage())->toBe('Custom failure. Cause: timeout sess_[redacted]')
+        ->and($exception->getPrevious())->toBe($cause)
+        ->and($exception->validationFields)->toBe([]);
+});

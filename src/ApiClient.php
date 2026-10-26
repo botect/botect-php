@@ -80,7 +80,14 @@ final readonly class ApiClient
         if ($response->status < 200 || $response->status >= 300) {
             $retryable = $response->status >= 500 || in_array($response->status, [408, 425, 429], true)
                 || ($response->status === 404 && str_ends_with($path, '/logged-in'));
-            throw new DeliveryException($retryable, $response->status);
+            $fields = [];
+            if ($response->status === 422) {
+                $data = json_decode($response->body, false, 32);
+                if ($data instanceof \stdClass && ($data->details ?? null) instanceof \stdClass) {
+                    $fields = array_keys(get_object_vars($data->details));
+                }
+            }
+            throw new DeliveryException($retryable, $response->status, validationFields: $fields);
         }
         if ($emptyResponseAllowed && trim($response->body) === '') {
             return [];

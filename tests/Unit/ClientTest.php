@@ -170,3 +170,47 @@ test('verified bot identity remains enforceable even without a numeric score', f
     expect($this->sdk->verdict('sess_verified')->action)->toBe('block')
         ->and($this->sdk->verdict('sess_verified')->available())->toBeTrue();
 });
+
+test('422 diagnostics retain only field names without body messages or causes', function (): void {
+    $this->transport->result = new Response(422, json_encode([
+        'error' => 'Invalid payload', 'message' => 'secret top-level value', 'code' => 'INVALID_PAYLOAD',
+        'details' => ['events.1.sent_at' => ['secret timestamp value'], 'events.0.payload.mouse_moves' => ['sess_private sk_secret alice@example.com']],
+    ], JSON_THROW_ON_ERROR));
+    $client = new ApiClient(new Configuration('pk_test', 'sk_secret', serverIngestEnabled: true), $this->transport);
+    try {
+        $client->serverIngest(Operation::ForwardEvents, [], str_repeat('a', 64));
+        $this->fail('Expected 422');
+    } catch (DeliveryException $exception) {
+        expect($exception->status)->toBe(422)->and($exception->retryable)->toBeFalse()
+            ->and($exception->validationFields)->toBe(['events.0.payload.mouse_moves', 'events.1.sent_at'])
+            ->and($exception->getPrevious())->toBeNull()
+            ->and(serialize($exception))->not->toContain('secret', 'sess_private', 'alice@example.com');
+    }
+});
+
+test('malformed 422 diagnostics keep the original permanent HTTP failure', function (string $body): void {
+    $this->transport->result = new Response(422, $body);
+    try {
+        (new ApiClient($this->config, $this->transport))->loggedIn('sess_test');
+        $this->fail('Expected 422');
+    } catch (DeliveryException $exception) {
+        expect($exception->status)->toBe(422)->and($exception->retryable)->toBeFalse()
+            ->and($exception->validationFields)->toBe([])->and($exception->getPrevious())->toBeNull()
+            ->and($exception->getMessage())->toBe('Botect delivery returned HTTP 422.');
+    }
+})->with([
+    '', '<html>secret</html>', '{', 'null', '[]', '{}', '{"details":null}', '{"details":"secret"}',
+    '{"details":42}', '{"details":["secret"]}', '{"details":{}}',
+    str_repeat('{"nested":', 40).'{}'.str_repeat('}', 40),
+]);
+
+test('non-422 responses never expose validation details', function (int $status, bool $retryable): void {
+    $this->transport->result = new Response($status, '{"details":{"events.0.sent_at":["secret"]}}');
+    try {
+        (new ApiClient($this->config, $this->transport))->loggedIn('sess_test');
+        $this->fail('Expected HTTP failure');
+    } catch (DeliveryException $exception) {
+        expect($exception->retryable)->toBe($retryable)->and($exception->validationFields)->toBe([])
+            ->and($exception->getMessage())->toBe('Botect delivery returned HTTP '.$status.'.');
+    }
+})->with([[401, false], [404, true], [408, true], [425, true], [429, true], [503, true]]);
