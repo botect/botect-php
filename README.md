@@ -227,6 +227,14 @@ Laravel verdicts use your configured cache store. Web processes and queue worker
 
 ## Reading verdicts
 
+Verdicts have three states:
+
+- **Unavailable (`not_computed`)**: the visitor was never scored, or evidence is unavailable (including the SDK fallback). `available()` and `inconclusive()` are both false.
+- **Inconclusive (`inconclusive`)**: the visitor was scored without reaching a verdict. `inconclusive()` is true and `available()` is false. Its score is 0 and must not be compared against a threshold.
+- **Decisive or verified**: `available()` is true. Verified identities can have score 0.
+
+Use `action` for enforcement, rather than comparing `score` against a threshold. An inconclusive response preserves the API's action, detection IDs, and reason, and is cached like a decisive verdict. The unavailable fallback is never cached.
+
 A verdict needs a response from Botect, so the SDK provides two explicit choices.
 
 ### Immediate lookup
@@ -236,10 +244,11 @@ Use `lookupVerdict()` when you need evidence for the current request:
 ```php
 $verdict = $botect->lookupVerdict($sessionToken, ['path' => '/checkout']);
 
+$action = $verdict->action; // Use this for enforcement.
+$reason = $verdict->reason;
+
 if ($verdict->available()) {
     $score = $verdict->score;
-    $action = $verdict->action;
-    $reason = $verdict->reason;
 }
 ```
 

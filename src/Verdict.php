@@ -16,13 +16,14 @@ final readonly class Verdict
     {
         if (! in_array($data['action'] ?? null, ['allow', 'block', 'challenge', 'log', 'delay'], true)
             || ! is_int($data['score'] ?? null) || $data['score'] < 0 || $data['score'] > 99
-            || ! in_array($data['verdict'] ?? null, ['not_computed', 'definite', 'confident_automated', 'likely_automated', 'likely_human', 'verified'], true)
+            || ! in_array($data['verdict'] ?? null, ['not_computed', 'inconclusive', 'definite', 'confident_automated', 'likely_automated', 'likely_human', 'verified'], true)
+            || ($data['verdict'] === 'inconclusive' && $data['score'] !== 0)
             || ! is_array($data['detection_ids'] ?? null) || ! array_is_list($data['detection_ids'])
             || count(array_filter($data['detection_ids'], 'is_int')) !== count($data['detection_ids'])
             || ! is_string($data['reason'] ?? null)) {
             throw new UnexpectedValueException('Invalid Botect verdict response.');
         }
-        if ($data['verdict'] === 'not_computed' || ($data['score'] === 0 && $data['verdict'] !== 'verified')) {
+        if ($data['verdict'] === 'not_computed' || ($data['score'] === 0 && ! in_array($data['verdict'], ['verified', 'inconclusive'], true))) {
             return new self;
         }
 
@@ -32,6 +33,11 @@ final readonly class Verdict
     public function available(): bool
     {
         return $this->verdict !== 'not_computed' && ($this->score > 0 || $this->verdict === 'verified');
+    }
+
+    public function inconclusive(): bool
+    {
+        return $this->verdict === 'inconclusive';
     }
 
     /** @return array{verdict:string, score:int, action:string, detection_ids:list<int>, reason:string} */

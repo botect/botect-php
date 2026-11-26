@@ -2,7 +2,11 @@
 
 Notable changes to `botect/botect-php` are documented here. This changelog covers the PHP package; see the [Botect platform changelog](https://docs.botect.ai/changelog) for API and platform updates.
 
-## Unreleased
+## v0.1.9 — 2026-11-25
+
+### Added
+
+- Accept and preserve score-0 `inconclusive` verdicts, expose `Verdict::inconclusive()`, and cache them across background refreshes and cached reads. `available()` remains false for inconclusive results; unavailable `not_computed` fallbacks remain uncached.
 
 ## v0.1.8 — 2026-10-26
 

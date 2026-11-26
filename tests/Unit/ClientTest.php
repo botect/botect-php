@@ -101,6 +101,7 @@ test('unknown or unscored verdicts never stick in the cache', function (): void 
     $this->sdk->verdict('sess_test');
     $this->transport->result = new Response(200, json_encode((new Verdict)->toArray(), JSON_THROW_ON_ERROR));
     $this->sdk->deliver($this->dispatcher->deliveries[0]);
+    expect($this->cache->get($this->dispatcher->deliveries[0]->payload['cache_key']))->toBeNull();
     $this->sdk->verdict('sess_test');
     expect($this->dispatcher->deliveries)->toHaveCount(2);
 });
@@ -214,3 +215,25 @@ test('non-422 responses never expose validation details', function (int $status,
             ->and($exception->getMessage())->toBe('Botect delivery returned HTTP '.$status.'.');
     }
 })->with([[401, false], [404, true], [408, true], [425, true], [429, true], [503, true]]);
+
+test('immediate lookup returns an inconclusive verdict without scheduling a refresh', function (): void {
+    $data = ['verdict' => 'inconclusive', 'score' => 0, 'action' => 'allow', 'detection_ids' => [12], 'reason' => 'Scored without reaching a verdict'];
+    $this->transport->result = new Response(200, json_encode($data, JSON_THROW_ON_ERROR));
+    $verdict = $this->sdk->lookupVerdict('sess_test');
+
+    expect($verdict->toArray())->toBe($data)->and($verdict->available())->toBeFalse()
+        ->and($verdict->inconclusive())->toBeTrue()->and($this->transport->requests)->toHaveCount(1)
+        ->and($this->dispatcher->deliveries)->toBe([]);
+});
+
+test('asynchronous refresh caches inconclusive evidence and cached reads do not refresh it', function (): void {
+    $data = ['verdict' => 'inconclusive', 'score' => 0, 'action' => 'allow', 'detection_ids' => [12], 'reason' => 'Scored without reaching a verdict'];
+    expect($this->sdk->verdict('sess_test')->inconclusive())->toBeFalse()->and($this->transport->requests)->toBe([]);
+    $delivery = $this->dispatcher->deliveries[0];
+    $this->transport->result = new Response(200, json_encode($data, JSON_THROW_ON_ERROR));
+    $this->sdk->deliver($delivery);
+
+    expect($this->cache->get($delivery->payload['cache_key'])->toArray())->toBe($data)
+        ->and($this->sdk->verdict('sess_test')->toArray())->toBe($data)
+        ->and($this->dispatcher->deliveries)->toHaveCount(1)->and($this->transport->requests)->toHaveCount(1);
+});
