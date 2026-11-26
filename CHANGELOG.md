@@ -2,7 +2,7 @@
 
 Notable changes to `botect/botect-php` are documented here. This changelog covers the PHP package; see the [Botect platform changelog](https://docs.botect.ai/changelog) for API and platform updates.
 
-## Unreleased
+## v0.1.9 — 2026-11-25
 
 ### Added
 
