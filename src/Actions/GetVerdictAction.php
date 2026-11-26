@@ -38,7 +38,7 @@ final readonly class GetVerdictAction
             }
             $key = hash('sha256', $keyInput);
             $cached = $this->cache->get($key);
-            if ($cached !== null && $cached->available()) {
+            if ($cached !== null && ($cached->available() || $cached->inconclusive())) {
                 return $cached;
             }
             $payload = ['context' => $context, 'cache_key' => $key];

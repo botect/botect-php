@@ -4,6 +4,10 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 ## Unreleased
 
+### Added
+
+- Accept and preserve score-0 `inconclusive` verdicts, expose `Verdict::inconclusive()`, and cache them across background refreshes and cached reads. `available()` remains false for inconclusive results; unavailable `not_computed` fallbacks remain uncached.
+
 ## v0.1.8 — 2026-10-26
 
 ### Added

@@ -10,6 +10,7 @@ use Botect\Operation;
 use Botect\Storage\FileSpool;
 use Botect\Storage\FileVerdictCache;
 use Botect\Testing\ArrayVerdictCache;
+use Botect\Testing\FakeDispatcher;
 use Botect\Tests\FakeTransport;
 use Botect\Verdict;
 
@@ -110,3 +111,21 @@ test('spooled legacy and new event payloads survive reconstruction, retries, and
             ->and($request['headers']['Idempotency-Key'])->toBe($data['id']);
     }
 })->with(['v0.1.7' => true, 'stamped' => false]);
+
+test('persistent inconclusive verdicts survive reconstruction and are served without a refresh', function (): void {
+    $config = new Configuration('pk_test', 'sk_secret');
+    $transport = new FakeTransport;
+    $dispatcher = new FakeDispatcher;
+    $sdk = new Botect($config, $dispatcher, new FileVerdictCache($this->directory), $transport);
+    $data = ['verdict' => 'inconclusive', 'score' => 0, 'action' => 'allow', 'detection_ids' => [12], 'reason' => 'Scored without reaching a verdict'];
+    $sdk->verdict('sess_test');
+    $transport->result = new Response(200, json_encode($data, JSON_THROW_ON_ERROR));
+    $sdk->deliver($dispatcher->deliveries[0]);
+
+    $nextDispatcher = new FakeDispatcher;
+    $next = new Botect($config, $nextDispatcher, new FileVerdictCache($this->directory), $transport);
+    $verdict = $next->verdict('sess_test');
+    expect($verdict->toArray())->toBe($data)->and($verdict->available())->toBeFalse()
+        ->and($verdict->inconclusive())->toBeTrue()->and($nextDispatcher->deliveries)->toBe([])
+        ->and($transport->requests)->toHaveCount(1);
+});
