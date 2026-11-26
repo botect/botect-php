@@ -8,6 +8,7 @@ use Botect\Contracts\Dispatcher;
 use Botect\Delivery;
 use Botect\Exceptions\DeliveryException;
 use Botect\FlushResult;
+use Botect\Operation;
 use Throwable;
 
 final readonly class FileSpool implements Dispatcher
@@ -84,7 +85,7 @@ final readonly class FileSpool implements Dispatcher
                     $attempts = ($data['attempts'] ?? 0) + 1;
                     if ($exception instanceof DeliveryException && $exception->retryable && $attempts < $this->maxAttempts) {
                         $data['attempts'] = $attempts;
-                        $data['available_at'] = time() + min(300, 2 ** $attempts);
+                        $data['available_at'] = time() + max(min(300, 2 ** $attempts), ($delivery->operation ?? null) === Operation::RefreshChallengeList ? $exception->retryAfterSeconds : 0);
                         Files::write($path, $data);
                         $retried++;
                     } else {

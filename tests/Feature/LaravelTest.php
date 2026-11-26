@@ -817,3 +817,15 @@ test('serialized event jobs deliver legacy and stamped payloads unchanged across
             ->and($request['headers']['Idempotency-Key'])->toBe($delivery->id);
     }
 })->with(['v0.1.7' => true, 'stamped' => false]);
+
+test('Laravel challenge-list response allowance is isolated from ordinary API calls', function (): void {
+    Http::preventStrayRequests();
+    $body = '{"padding":"'.str_repeat('x', 300000).'"}';
+    Http::fake(['*' => Http::response($body)]);
+    $transport = $this->app->make(LaravelHttpTransport::class);
+    $client = new ApiClient($this->app->make(Configuration::class), $transport);
+    expect($client->challengeList()['padding'])->toHaveLength(300000);
+    expect(fn () => $transport->send('GET', 'https://api.botect.ai/v1/test', [], null))->toThrow(DeliveryException::class);
+    $retimed = $transport->withResponseLimit(1048576)->withTimeouts(1000, 5000);
+    expect($retimed->send('GET', 'https://api.botect.ai/v1/test', [], null)->body)->toBe($body);
+});

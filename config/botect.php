@@ -3,6 +3,7 @@
 declare(strict_types=1);
 use Botect\Laravel\DefaultLoggedInResolver;
 use Botect\Laravel\DefaultVerdictHandler;
+use Botect\Support\ChallengePage;
 
 return [
     'site_key' => env('BOTECT_SITE_KEY', ''),
@@ -65,5 +66,13 @@ return [
     'enforcement' => [
         'enabled' => false,
         'handler' => DefaultVerdictHandler::class,
+        'local_challenges' => [
+            'enabled' => false,
+            'action' => 'challenge',
+            'path' => '/_botect/challenge',
+            'clearance_seconds' => 1800,
+            'renderer' => ChallengePage::class,
+            'except' => [],
+        ],
     ],
 ];

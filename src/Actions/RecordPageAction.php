@@ -10,12 +10,11 @@ use Botect\Contracts\Dispatcher;
 use Botect\Delivery;
 use Botect\Operation;
 use Botect\Page;
+use Botect\Support\HeaderShape;
 use Throwable;
 
 final readonly class RecordPageAction
 {
-    private const HEADERS = ['accept', 'accept-language', 'accept-encoding', 'cache-control', 'connection', 'cookie', 'host', 'pragma', 'referer', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform', 'sec-fetch-dest', 'sec-fetch-mode', 'sec-fetch-site', 'sec-fetch-user', 'upgrade-insecure-requests', 'user-agent'];
-
     public function __construct(private Configuration $configuration, private Dispatcher $dispatcher) {}
 
     /** Header names are best-effort PHP observation order, never original wire order.
@@ -31,13 +30,7 @@ final readonly class RecordPageAction
             if (! in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'], true)) {
                 $method = 'OTHER';
             }
-            $headers = [];
-            foreach ($headerNames as $name) {
-                $name = strtolower($name);
-                if (in_array($name, self::HEADERS, true) && ! in_array($name, $headers, true)) {
-                    $headers[] = $name;
-                }
-            }
+            $headers = HeaderShape::normalize($headerNames);
             $languages = [];
             foreach (explode(',', substr($acceptLanguage, 0, 256)) as $item) {
                 $language = strtolower(trim(explode(';', $item, 2)[0]));

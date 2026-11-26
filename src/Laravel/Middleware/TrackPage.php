@@ -23,14 +23,14 @@ final readonly class TrackPage
         $page = $botect = null;
         $started = hrtime(true);
         try {
-            $excluded = $request->is(ltrim((string) config('botect.ingest_path'), '/'));
+            $excluded = $request->is(ltrim((string) config('botect.ingest_path'), '/'), ltrim((string) config('botect.enforcement.local_challenges.path', '/_botect/challenge'), '/'));
             foreach (config('botect.tracking.except', []) as $pattern) {
                 $excluded = $excluded || $request->is($pattern);
             }
             if (! $excluded && $request->isMethod('GET') && config('botect.tracking.enabled') && config('botect.server_ingest_enabled')) {
                 $botect = $this->container->make(Botect::class);
                 $loggedIn = LoggedInState::of($this->container, $request);
-                $page = $botect->page($request->cookie(config('botect.cookie_name')), $loggedIn);
+                $page = $request->attributes->get('botect.page') ?? $botect->page($request->cookie(config('botect.cookie_name')), $loggedIn);
                 $request->attributes->set('botect.page', $page);
                 $request->attributes->set('botect.session_token', $page->sessionToken);
             }
@@ -39,7 +39,7 @@ final readonly class TrackPage
         }
 
         $response = $next($request);
-        if ($page === null || $botect === null || ! $response->isSuccessful() || $response instanceof StreamedResponse
+        if ($request->attributes->get('botect.denied') || $page === null || $botect === null || ! $response->isSuccessful() || $response instanceof StreamedResponse
             || ! str_starts_with(strtolower((string) $response->headers->get('Content-Type')), 'text/html')
             || $response->headers->has('Content-Encoding') || ! is_string($response->getContent())) {
             return $response;
@@ -61,7 +61,9 @@ final readonly class TrackPage
             foreach (['Content-Length', 'ETag', 'Last-Modified'] as $header) {
                 $response->headers->remove($header);
             }
-            $botect->recordPage($page, $request->method(), $request->getPathInfo(), array_keys($request->headers->all()), (string) $request->header('Accept-Language', ''), (int) ((hrtime(true) - $started) / 1000000), ClientIpResolverFactory::resolve($this->container)->resolve($request));
+            if (! $request->attributes->get('botect.page_reported')) {
+                $botect->recordPage($page, $request->method(), $request->getPathInfo(), array_keys($request->headers->all()), (string) $request->header('Accept-Language', ''), (int) ((hrtime(true) - $started) / 1000000), $request->attributes->has('botect.client_ip') ? $request->attributes->get('botect.client_ip') : ClientIpResolverFactory::resolve($this->container)->resolve($request));
+            }
         } catch (Throwable) {
             return $response;
         }
