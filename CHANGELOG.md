@@ -2,7 +2,7 @@
 
 Notable changes to `botect/botect-php` are documented here. This changelog covers the PHP package; see the [Botect platform changelog](https://docs.botect.ai/changelog) for API and platform updates.
 
-## Unreleased
+## v0.2.0 — 2026-11-26
 
 ### Added
 
@@ -15,13 +15,6 @@ Notable changes to `botect/botect-php` are documented here. This changelog cover
 
 - With local opt-in, the default Laravel handler supports session challenges; crowd action never overrides session-verdict policy. Original crowd-denied GETs require local report acceptance and are reported once.
 - Upgrade queue/spool consumers and restart workers before enabling local enforcement. New workers preserve v0.1.9 payloads, IDs, creation times and existing operation retry behavior; refresh retries additionally honor the store backoff.
-
-### Fixed
-
-- Snapshot reads no longer take mutation locks or rebuild crawler CIDRs. Request eligibility and shape matching precede loading immutable, precompiled exemption catalogues.
-- The bundled challenge supports SHA-256 without SubtleCrypto and shows recoverable browser, network and proof errors with a reload button.
-- Missing Accept permits HTML; valid disabled responses retain their absolute refresh time while immediately removing enforcement evidence.
-- Custom verdict handlers no longer depend on bundled rendering, and valid percent-encoded spaces are accepted in return paths and queries.
 
 ## v0.1.9 — 2026-11-25
 
