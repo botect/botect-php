@@ -26,7 +26,7 @@ final readonly class DeliverAction
         if ($delivery->operation === Operation::RefreshVerdict) {
             $loggedIn = $delivery->payload['logged_in'] ?? null;
             $verdict = $this->client->verdict($delivery->sessionToken, $delivery->payload['context'], is_bool($loggedIn) ? $loggedIn : null);
-            if ($verdict->available()) {
+            if ($verdict->available() || $verdict->inconclusive()) {
                 $this->cache->put($delivery->payload['cache_key'], $verdict, $this->configuration->verdictTtl);
             }
         } elseif ($delivery->operation === Operation::AssertLoggedIn) {
