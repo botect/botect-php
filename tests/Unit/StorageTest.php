@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+use Botect\Actions\RefreshChallengeListAction;
 use Botect\Botect;
 use Botect\Configuration;
 use Botect\Delivery;
@@ -9,6 +10,7 @@ use Botect\Http\Response;
 use Botect\Operation;
 use Botect\Storage\FileSpool;
 use Botect\Storage\FileVerdictCache;
+use Botect\Storage\MemoryEnforcementStore;
 use Botect\Testing\ArrayVerdictCache;
 use Botect\Testing\FakeDispatcher;
 use Botect\Tests\FakeTransport;
@@ -128,4 +130,18 @@ test('persistent inconclusive verdicts survive reconstruction and are served wit
     expect($verdict->toArray())->toBe($data)->and($verdict->available())->toBeFalse()
         ->and($verdict->inconclusive())->toBeTrue()->and($nextDispatcher->deliveries)->toBe([])
         ->and($transport->requests)->toHaveCount(1);
+});
+
+test('refresh spool retries wait thirty seconds while preserving the complete original envelope', function (): void {
+    $configuration = new Configuration('pk_test', 'sk_secret', localChallengesEnabled: true);
+    $store = new MemoryEnforcementStore;
+    $refresh = new RefreshChallengeListAction($configuration, $store);
+    $delivery = $refresh->delivery();
+    $spool = new FileSpool($this->directory);
+    $transport = new FakeTransport;
+    $transport->result = new Response(503, 'maintenance');
+    $sdk = new Botect($configuration, $spool, new ArrayVerdictCache, $transport, $store);
+    expect($spool->dispatch($delivery))->toBeTrue()->and($spool->flush($sdk->deliver(...))->retried)->toBe(1);
+    $stored = json_decode(file_get_contents($this->directory.'/'.$delivery->id.'.json'), true);
+    expect($stored['delivery'])->toBe($delivery->toArray())->and($stored['available_at'])->toBeGreaterThanOrEqual(time() + 29);
 });

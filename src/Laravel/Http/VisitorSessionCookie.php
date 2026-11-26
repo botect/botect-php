@@ -26,14 +26,15 @@ final readonly class VisitorSessionCookie
 {
     public function __construct(private Botect $botect, private Encrypter $encrypter) {}
 
-    public function read(Request $request): ?string
+    public function read(Request $request, ?string $cookieName = null, ?\Closure $valid = null): ?string
     {
-        $name = (string) config('botect.cookie_name');
+        $name = $cookieName ?? (string) config('botect.cookie_name');
+        $valid ??= fn (string $value): bool => $this->botect->sessionToken($value) !== null;
         $raw = $request->cookie($name);
         if (! is_string($raw) || $raw === '') {
             return null;
         }
-        if ($this->botect->sessionToken($raw) !== null) {
+        if ($valid($raw)) {
             return $raw;
         }
         try {
@@ -42,6 +43,8 @@ final readonly class VisitorSessionCookie
             return null;
         }
 
-        return is_string($value) ? CookieValuePrefix::validate($name, $value, $this->encrypter->getAllKeys()) : null;
+        $value = is_string($value) ? CookieValuePrefix::validate($name, $value, $this->encrypter->getAllKeys()) : null;
+
+        return is_string($value) && $valid($value) ? $value : null;
     }
 }

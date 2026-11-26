@@ -6,6 +6,7 @@ use Botect\Collector;
 use Botect\Configuration;
 use Botect\Exceptions\SessionMismatchException;
 use Botect\Http\Response;
+use Botect\Support\HeaderShape;
 use Botect\Support\PageTokens;
 use Botect\Testing\ArrayVerdictCache;
 use Botect\Testing\FakeDispatcher;
@@ -280,3 +281,11 @@ test('server relay timestamps obey inclusive fixed bounds without clamping', fun
     ['1970-01-02T00:00:00Z', true], ['2038-01-18T00:00:00Z', true],
     ['1970-01-01T23:59:59.999999Z', false], ['2038-01-18T00:00:00.000001Z', false],
 ]);
+
+test('page-report normalization and local shape hashing share the exact same names', function (): void {
+    $names = ['HOST', 'X-Excluded', 'Accept', 'Host', 'User-Agent'];
+    $this->sdk->recordPage($this->sdk->page(), 'GET', '/', $names);
+    $normalized = $this->dispatcher->deliveries[0]->payload['header_names'];
+    expect($normalized)->toBe(HeaderShape::normalize($names))
+        ->and(substr(hash('sha256', implode(',', $normalized)), 0, 32))->toBe(HeaderShape::hash($names));
+});

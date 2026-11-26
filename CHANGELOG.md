@@ -2,6 +2,20 @@
 
 Notable changes to `botect/botect-php` are documented here. This changelog covers the PHP package; see the [Botect platform changelog](https://docs.botect.ai/changelog) for API and platform updates.
 
+## v0.2.0 — 2026-11-26
+
+### Added
+
+- Opt-in local header-shape enforcement with customer-selected JavaScript challenge (default) or block, published-crawler CIDR and trusted-address exemptions, and fail-open anonymous HTML navigation eligibility.
+- Credential-scoped memory, private-file and Laravel enforcement stores, atomic catalogue reuse, lease-protected lazy refresh, explicit refresh APIs and `botect:refresh-challenge-list {--dispatch}`. No scheduler is registered.
+- Signed 120-second challenge tickets, network-bound HttpOnly clearance cookies, replaceable HTML renderer, safe host logging, and framework-independent plain PHP mounting APIs.
+- Optional response-limit-aware transports: 1 MiB for challenge-list responses, with existing 256 KiB limits retained elsewhere.
+
+### Changed
+
+- With local opt-in, the default Laravel handler supports session challenges; crowd action never overrides session-verdict policy. Original crowd-denied GETs require local report acceptance and are reported once.
+- Upgrade queue/spool consumers and restart workers before enabling local enforcement. New workers preserve v0.1.9 payloads, IDs, creation times and existing operation retry behavior; refresh retries additionally honor the store backoff.
+
 ## v0.1.9 — 2026-11-25
 
 ### Added

@@ -13,6 +13,9 @@ use Illuminate\Support\Facades\Facade;
 /**
  * @method static \Botect\Verdict verdict(string $sessionToken, array $context = [], ?bool $loggedIn = null)
  * @method static \Botect\Verdict lookupVerdict(string $sessionToken, array $context = [], ?bool $loggedIn = null)
+ * @method static bool refreshChallengeList()
+ * @method static bool dispatchChallengeListRefresh()
+ * @method static \Botect\LocalChallengeDecision localChallenge(string $method, array $headerNames, ?\Botect\ClientIp $clientIp, ?bool $loggedIn, string $userAgent, bool $htmlNavigation, bool $excluded = false)
  * @method static bool loggedIn(string $sessionToken)
  * @method static \Botect\Page page(?string $sessionCookie = null, ?bool $loggedIn = null)
  * @method static string collector(?\Botect\Page $page = null, ?string $cspNonce = null)

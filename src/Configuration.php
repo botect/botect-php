@@ -22,7 +22,15 @@ final readonly class Configuration
         public int $maxBodyBytes = 262144,
         public int $deliveryConnectTimeoutMs = 1000,
         public int $deliveryTimeoutMs = 5000,
+        public bool $localChallengesEnabled = false,
+        public string $localChallengeAction = 'challenge',
+        public string $challengePath = '/_botect/challenge',
+        public int $clearanceSeconds = 1800,
     ) {
+        if (! in_array($localChallengeAction, ['challenge', 'block'], true) || $clearanceSeconds < 60 || $clearanceSeconds > 3600
+            || ! preg_match('~^/(?!/)[a-zA-Z0-9/_-]+$~D', $challengePath) || $challengePath === $ingestPath) {
+            throw new InvalidArgumentException('Invalid local challenge action, path or clearance lifetime.');
+        }
         if ($siteKey === '' || preg_match('/[\x00-\x20\x7f]/', $siteKey)) {
             throw new InvalidArgumentException('A non-empty site key without whitespace is required.');
         }
@@ -49,7 +57,12 @@ final readonly class Configuration
     /** The same configuration with different HTTP limits, validated again. */
     public function withTimeouts(int $connectTimeoutMs, int $timeoutMs): self
     {
-        return new self($this->siteKey, $this->privateKey, $this->apiUrl, $this->collectorUrl, $this->serverIngestEnabled, $this->ingestPath, $connectTimeoutMs, $timeoutMs, $this->verdictTtl, $this->pageTokenTtl, $this->maxBodyBytes, $this->deliveryConnectTimeoutMs, $this->deliveryTimeoutMs);
+        return new self($this->siteKey, $this->privateKey, $this->apiUrl, $this->collectorUrl, $this->serverIngestEnabled, $this->ingestPath, $connectTimeoutMs, $timeoutMs, $this->verdictTtl, $this->pageTokenTtl, $this->maxBodyBytes, $this->deliveryConnectTimeoutMs, $this->deliveryTimeoutMs, $this->localChallengesEnabled, $this->localChallengeAction, $this->challengePath, $this->clearanceSeconds);
+    }
+
+    public function enforcementScope(): string
+    {
+        return hash('sha256', $this->apiUrl.'|'.$this->siteKey.'|'.hash('sha256', (string) $this->privateKey));
     }
 
     public function namespace(): string

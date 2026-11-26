@@ -72,3 +72,12 @@ test('the curl transport re-times into a copy and leaves the original alone', fu
     $retimed = $transport->withTimeouts(1000, 5000);
     expect($retimed)->toBeInstanceOf(CurlTransport::class)->and($retimed)->not->toBe($transport);
 });
+
+test('response limit and timeout copies preserve each other and local configuration', function (): void {
+    $transport = new CurlTransport(new Configuration('pk_test', 'sk_secret', localChallengesEnabled: true, localChallengeAction: 'block'));
+    $large = $transport->withResponseLimit(1048576)->withTimeouts(1000, 5000);
+    $property = new ReflectionProperty(CurlTransport::class, 'responseLimit');
+    expect($property->getValue($transport))->toBe(262144)->and($property->getValue($large))->toBe(1048576);
+    $configuration = (new ReflectionProperty(CurlTransport::class, 'configuration'))->getValue($large);
+    expect($configuration->localChallengesEnabled)->toBeTrue()->and($configuration->localChallengeAction)->toBe('block');
+});

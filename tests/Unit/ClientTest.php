@@ -5,6 +5,7 @@ use Botect\ApiClient;
 use Botect\Botect;
 use Botect\Configuration;
 use Botect\Contracts\Dispatcher;
+use Botect\Contracts\EnforcementStore;
 use Botect\Delivery;
 use Botect\Exceptions\DeliveryException;
 use Botect\Http\Response;
@@ -237,3 +238,59 @@ test('asynchronous refresh caches inconclusive evidence and cached reads do not 
         ->and($this->sdk->verdict('sess_test')->toArray())->toBe($data)
         ->and($this->dispatcher->deliveries)->toHaveCount(1)->and($this->transport->requests)->toHaveCount(1);
 });
+
+test('challenge-list custom transports classify status before decoding and bound JSON types', function (int $status, string $body, bool $retryable): void {
+    $this->transport->result = new Response($status, $body);
+    try {
+        (new ApiClient($this->config, $this->transport))->challengeList();
+        $this->fail('Expected refusal');
+    } catch (DeliveryException $exception) {
+        expect($exception->retryable)->toBe($retryable);
+    }
+})->with([[503, str_repeat('x', 1048577), true], [200, str_repeat('x', 1048577), false], [200, '[]', false], [200, '{"trusted_ranges":[[]]}', false]]);
+
+test('v0.1.9 serialized deliveries retain operation payload identity and time with new consumers', function (Operation $operation, array $payload, string $response): void {
+    $configuration = new Configuration('pk_test', 'sk_secret', serverIngestEnabled: true, localChallengesEnabled: true);
+    $store = new class implements EnforcementStore
+    {
+        public function readCatalogue(string $id): ?array
+        {
+            throw new RuntimeException('Old deliveries must not load catalogues.');
+        }
+
+        public function writeCatalogue(string $id, array $catalogue): void
+        {
+            throw new RuntimeException('Old deliveries must not publish catalogues.');
+        }
+
+        public function read(): array
+        {
+            throw new RuntimeException('Old deliveries must not read new storage.');
+        }
+
+        public function update(Closure $change): mixed
+        {
+            throw new RuntimeException('Old deliveries must not mutate new storage.');
+        }
+
+        public function persistent(): bool
+        {
+            return true;
+        }
+    };
+    $delivery = new Delivery($operation, 'sess_legacy', $payload, str_repeat('a', 64), time() - 10);
+    $decoded = unserialize(serialize($delivery));
+    $sdk = new Botect($configuration, $this->dispatcher, $this->cache, $this->transport, $store);
+    $this->transport->result = new Response(200, $response);
+    $sdk->deliver($decoded);
+    expect($decoded->toArray())->toBe($delivery->toArray())->and($this->transport->requests)->toHaveCount(1);
+    if (in_array($operation, [Operation::RecordPage, Operation::ForwardEvents], true)) {
+        expect(json_decode($this->transport->requests[0]['body'], true))->toBe($payload)
+            ->and($this->transport->requests[0]['headers']['Idempotency-Key'])->toBe($delivery->id);
+    }
+})->with([
+    [Operation::AssertLoggedIn, [], '{"logged_in":true,"asserted_at":"2026-11-26T00:00:00Z"}'],
+    [Operation::RefreshVerdict, ['context' => [], 'cache_key' => str_repeat('b', 64)], '{"verdict":"inconclusive","score":0,"action":"allow","detection_ids":[],"reason":"Legacy"}'],
+    [Operation::RecordPage, ['schema_version' => 1, 'page_id' => str_repeat('c', 32), 'session_token' => 'sess_legacy', 'header_names' => ['host']], '{}'],
+    [Operation::ForwardEvents, ['schema_version' => 1, 'events' => [['request_id' => 'event', 'sent_at' => '2026-11-25T00:00:00Z', 'relayed_at' => '2026-11-25T00:00:01.123456Z', 'type' => 'page', 'payload' => []]]], '{}'],
+]);
