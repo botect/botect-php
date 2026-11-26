@@ -7,6 +7,7 @@ namespace Botect\Laravel\Jobs;
 use Botect\Botect;
 use Botect\Delivery;
 use Botect\Exceptions\DeliveryException;
+use Botect\Operation;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -63,7 +64,8 @@ final class DeliverJob implements ShouldBeUnique, ShouldQueue
             // restart looked like data loss. Release instead: only a delivery
             // that finally fails is reported, once, by failed() with its reason.
             $backoff = $this->backoff();
-            $this->release($backoff[min($this->attempts() - 1, count($backoff) - 1)]);
+            $delay = $backoff[min($this->attempts() - 1, count($backoff) - 1)];
+            $this->release($this->delivery->operation === Operation::RefreshChallengeList ? max($delay, $exception->retryAfterSeconds) : $delay);
         }
     }
 

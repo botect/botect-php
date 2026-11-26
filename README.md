@@ -463,6 +463,275 @@ Use your application's controller. The middleware uses cached `verdict()` reads,
 
 The default handler returns HTTP 403 for `block` and HTTP 429 with `Retry-After: 5` for `delay`. It allows `allow`, `log`, `challenge`, and unavailable evidence. To implement an actual challenge flow or different responses, provide a class implementing [`Botect\Laravel\Contracts\VerdictHandler`](src/Laravel/Contracts/VerdictHandler.php) and configure `enforcement.handler` to use it.
 
+## Local header-shape enforcement (opt-in)
+
+The SDK can keep Botect's challenge list locally and enforce matches without a
+visitor-path request to Botect. This is separate from session scores. Enable it
+only after your Botect server supports `/enforcement/challenge-list` and the
+project's internal SDK switch is enabled. It requires server ingest and a private
+key. The default action is a JavaScript challenge; `block` is also available.
+
+In Laravel, attach `botect.enforce` to the routes you protect and set all three
+switches: `botect.enforcement.enabled`, `botect.server_ingest_enabled`, and
+`botect.enforcement.local_challenges.enabled`. Setting the child switch alone
+cannot bypass the parent enforcement switch. Tracking need not be enabled: a crowd
+denial reports the original GET itself and sets the signed session cookie. If the
+local dispatcher refuses that report, the request is allowed. `TrackPage` reuses
+that Page and does not report it twice or inject the collector into a denial.
+
+```php
+'enforcement' => [
+    'enabled' => true,
+    'handler' => \Botect\Laravel\DefaultVerdictHandler::class,
+    'local_challenges' => [
+        'enabled' => true,                 // default false
+        'action' => 'challenge',           // challenge or block; invalid values fail at boot
+        'path' => '/_botect/challenge',
+        'clearance_seconds' => 1800,       // 60–3600 seconds
+        'renderer' => \Botect\Support\ChallengePage::class,
+        'except' => ['admin/*'],           // default []
+    ],
+],
+```
+
+The SDK evaluates the existing session verdict first; existing block and delay
+responses remain in force. Session `challenge` uses the built-in page only with
+local opt-in. The configured crowd action never converts that verdict into a block.
+Custom `VerdictHandler` implementations retain control; returning null continues
+processing. Replace only the HTML by binding `Botect\Contracts\ChallengeRenderer`
+or configuring `renderer` with a class implementing `render(array $context): string`.
+Context contains `ticket`, `nonce`, `verification_path`, `return_to` and `csp_nonce`.
+Changing the renderer does not change proof verification. The default handler renders
+its page lazily; a renderer failure or rejected return target does not prevent a
+custom verdict handler from running.
+
+Only explicitly signed-out HTML navigation GETs match. An absent Accept header
+permits HTML, like `*/*`; an explicit HTML rejection still bypasses enforcement. HEAD, JSON/XHR,
+prefetch/prerender (`Sec-Purpose` or legacy `Purpose`), ingest/verifier paths and
+configured exclusions bypass crowd enforcement. Unknown login state, a missing,
+private or inferred client address, expired snapshots and all unavailable evidence
+allow the request. Configure trusted proxies and `botect.client_ip` correctly;
+`auto`'s inferred fallback cannot authorize enforcement. Published crawler CIDRs,
+bare IPv4/IPv6 host addresses and current trusted-address entries exempt visitors regardless of ordinary crawler
+verdict policy. No DNS lookup or farm-range matching is performed.
+
+Persistent protection requires a persistent store. Laravel uses `botect.cache_store`
+with atomic locks for mutations; web processes and workers must share it. Snapshot
+reads are atomic and do not acquire an exclusive lock. Eligibility is checked before
+storage access; the small shape list is checked before loading exemptions. Validated
+crawler intervals are packed at publication and reused without CIDR validation or
+compilation on ordinary reads. Complete catalogue artifacts are immutable and become
+visible through an atomically published snapshot reference. Unsupported locks or
+storage outages allow requests. Bind `Botect\Contracts\EnforcementStore` for a
+custom adapter. Plain PHP accepts `enforcementStore` after the existing constructor
+or factory arguments; `Botect::create()` selects a private file store when given
+`storageDirectory`, otherwise a request-local memory store. Memory-only instances
+do not enqueue useless cross-request refreshes; an explicit refresh can populate
+that instance until its original expiry. New enforcement storage is scoped by API
+URL, site key and a private-key digest. Verdict and spool namespaces remain unchanged.
+
+Refresh is lazy after the snapshot's `refresh_after` (normally five minutes), using
+the existing dispatcher and a nonblocking 30-second lease. Dispatch refusal releases
+the lease and backs off five seconds. Timeout, connection failure, HTTP 408/425/429
+and 5xx preserve the old snapshot until its own expiry and back off 30 seconds.
+Authority failures, malformed HTTP 200, unsupported schema and `enabled:false`
+invalidate enforcement evidence immediately. Valid `enabled:false` responses retain
+their absolute `refresh_after` for the next attempt; HTTP authority failures and
+malformed responses use a 30-second failure backoff. Catalogue omission is accepted only with its exact retained
+version. A snapshot expires no later than 30 minutes after generation; reading,
+fetching or retries never restart its lifetime. The challenge-list response limit
+is 1 MiB; other bundled transport requests retain 262,144 bytes. Custom transports
+may implement `ResponseLimitAwareTransport::withResponseLimit(int $bytes): static`.
+
+```bash
+php artisan botect:refresh-challenge-list
+php artisan botect:refresh-challenge-list --dispatch
+```
+
+Plain PHP exposes blocking `$botect->refreshChallengeList(): bool` and deferred
+`$botect->dispatchChallengeListRefresh(): bool`. No scheduler is registered. Customers
+may optionally schedule `botect:refresh-challenge-list --dispatch` every minute;
+normal lazy refresh is sufficient with deferred delivery. Refresh retries in queue
+and spool modes honor both normal retry timing and the store's backoff. Deferred
+mode still attempts once. The one-hour delivery lifetime is unchanged.
+
+Both actions return HTTP 403 with `Cache-Control: private, no-store` and remove
+validators and Content-Length. Block returns plain text, issues no ticket or
+clearance, and cannot be bypassed by an existing clearance. A human sharing a flagged
+header set has no way through a block; **challenge is recommended**. Observed-zero
+crawler use is not a guarantee: an rDNS-only crawler newly using a listed shape can
+be challenged or blocked until evidence changes or enforcement is disabled. A
+JavaScript-capable automated client passes the challenge; this is not proof of humanity.
+
+Challenges require JavaScript and cookies. The bundled page falls back to its own
+SHA-256 implementation when SubtleCrypto is unavailable, including ordinary HTTP
+origins, without changing the proof. Missing browser APIs, network failures and
+rejected or expired proofs display an actionable message and a user-triggered reload
+button. The reload obtains a fresh challenge; it does not bypass verification.
+Valid percent-encoded spaces are retained in return paths and queries.
+The page uses a 120-second ticket bound
+to the exact address, session, user agent, origin and project. A same-origin JSON
+POST proves the nonce exchange and returns 204 with `botect_challenge_pass`. The
+clearance is signed separately, HttpOnly, host-only, path `/`, SameSite=Lax and
+Secure on HTTPS. It binds IPv4 /24 or IPv6 /64 plus session, user agent, origin and
+project; it never bypasses a session block/delay or a crowd block. Laravel excludes
+this independently signed clearance cookie from EncryptCookies when local challenges
+are enabled; its reader also accepts an encrypted cookie. Normal session cookies
+continue using the application's cookie-encryption policy.
+
+The bundled page sets a nonce-based CSP allowing its script and same-origin proof
+POST, plus `Referrer-Policy: no-referrer`. It honors a `csp_nonce` request attribute.
+Additional host CSP headers must permit the same nonce and connection; test them
+in a browser. Keep the verifier outside `web`, as the provider registers it; no
+application CSRF exemption is needed. Rebuild route/config caches after changes.
+
+Run `botect.enforce` **ahead of application response-cache middleware**. Exclude the
+verifier and SDK denial responses from application, CDN and page caches that ignore
+HTTP cache directives. An outer cache must never replay a denial to an exempt
+visitor. A CDN answering before PHP bypasses enforcement entirely. Retain the
+existing exclusions for tracked pages and their per-visitor collector tokens.
+
+Laravel logs best-effort `challenge_issued`, `block_issued` and `clearance_issued`
+events through PSR-3. Plain PHP accepts an optional `challengeLogger` closure
+`function (string $event, array $context): void` after the existing arguments. Fields
+are source, reason, nullable shape and the /24 or /64 network prefix; clearance
+logs contain source and prefix only. Crowd issuance is logged after report acceptance;
+clearance reuse is not logged. Logging failures are ignored. No raw address, user
+agent, session, path, ticket, proof or clearance is logged by these events.
+
+Upgrade queue/spool consumers and restart long-running workers **before** enabling
+new producers: v0.1.9 workers cannot deserialize the new operation. New consumers
+process existing deliveries without rewriting IDs, timestamps or payloads. Do not
+purge outstanding work. Then enable local protection, verify it, and enable the
+project's server switch. Local opt-out is immediate; server opt-out propagates on
+refresh, bounded by the existing snapshot's 30-minute expiry.
+
+### Plain PHP mounting example
+
+Mount the following handler before your application routes; it requires HTTPS and
+a trusted server-resolved client address. Replace the explicitly signed-out state
+with your application's nullable auth result, and set the trusted origin to your
+site. The ordinary page collector and event endpoint remain your existing setup.
+All token, verifier, renderer and cookie-value classes below are framework independent.
+
+```php
+<?php
+require __DIR__.'/vendor/autoload.php';
+
+use Botect\Actions\VerifyChallengeAction;
+use Botect\Botect;
+use Botect\ClientIp;
+use Botect\Configuration;
+use Botect\Support\ChallengePage;
+use Botect\Support\ChallengeTokens;
+
+$config = new Configuration(
+    siteKey: (string) getenv('BOTECT_SITE_KEY'),
+    privateKey: (string) getenv('BOTECT_PRIVATE_KEY'),
+    serverIngestEnabled: true,
+    localChallengesEnabled: true,
+    localChallengeAction: 'challenge',
+    challengePath: '/_botect/challenge',
+    clearanceSeconds: 1800,
+);
+$botect = Botect::create($config, storageDirectory: __DIR__.'/var/botect');
+$tokens = new ChallengeTokens($config);
+$origin = 'https://www.example.com'; // Trusted configuration, never an arbitrary Host header.
+$ip = ClientIp::fromString($_SERVER['REMOTE_ADDR'] ?? null, ClientIp::SOURCE_REQUEST);
+$ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$uri = $_SERVER['REQUEST_URI'] ?? '/';
+$path = parse_url($uri, PHP_URL_PATH);
+$sessionCookie = $_COOKIE['botect_server_session'] ?? null;
+$session = $botect->sessionToken($sessionCookie ?? '');
+$cookieOptions = ['expires' => 0, 'path' => '/', 'secure' => true,
+    'httponly' => true, 'samesite' => 'Lax']; // No Domain: host-only.
+$noStore = static function (): void {
+    header('Cache-Control: private, no-store');
+    header('Referrer-Policy: no-referrer');
+    foreach (['ETag', 'Last-Modified', 'Content-Length'] as $name) { header_remove($name); }
+};
+
+if ($path === $config->challengePath) {
+    $noStore();
+    $raw = file_get_contents('php://input', false, null, 0, 4097);
+    $json = strtolower(trim(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0])) === 'application/json';
+    $sameOrigin = ($_SERVER['HTTP_ORIGIN'] ?? '') === $origin
+        && ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '') !== 'cross-site';
+    $proof = $json && strlen($raw) <= 4096 ? json_decode($raw, true, 8) : null;
+    $verified = $method === 'POST' && $sameOrigin && is_array($proof) && $session !== null && $ip !== null
+        ? (new VerifyChallengeAction($tokens))->execute($proof, $session, $ip, $ua, $origin) : null;
+    if ($verified === null) { http_response_code(403); exit; }
+    setcookie('botect_challenge_pass', $verified['clearance'],
+        array_replace($cookieOptions, ['expires' => time() + $config->clearanceSeconds]));
+    $botect->logChallenge('clearance_issued', $verified['source'], $ip);
+    http_response_code(204);
+    exit;
+}
+
+// Preserve the server API's observed name order; never sort.
+$headers = function_exists('getallheaders') ? getallheaders() : [];
+$names = array_keys($headers);
+$accept = $_SERVER['HTTP_ACCEPT'] ?? '*/*';
+$allowsHtml = false;
+$specificity = -1;
+foreach (explode(',', $accept) as $item) {
+    $parts = array_map('trim', explode(';', strtolower($item)));
+    $quality = 1.0;
+    foreach (array_slice($parts, 1) as $parameter) {
+        if (str_starts_with($parameter, 'q=')) { $quality = (float) substr($parameter, 2); }
+    }
+    $rank = match ($parts[0]) { 'text/html' => 2, 'text/*' => 1, '*/*' => 0, default => -1 };
+    if ($rank > $specificity) { $specificity = $rank; $allowsHtml = $quality > 0; }
+}
+$htmlNavigation = $allowsHtml
+    && ! str_contains(strtolower($accept), 'application/json')
+    && ! str_contains(strtolower($_SERVER['CONTENT_TYPE'] ?? ''), 'json')
+    && strtolower($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') !== 'xmlhttprequest';
+$excluded = in_array($path, [$config->ingestPath, $config->challengePath], true)
+    || str_starts_with((string) $path, '/admin/')
+    || preg_match('/\b(prefetch|prerender)\b/i',
+        ($_SERVER['HTTP_SEC_PURPOSE'] ?? '').' '.($_SERVER['HTTP_PURPOSE'] ?? '')) === 1;
+$loggedIn = false; // Replace with your server's true/false/null auth result.
+$decision = $botect->localChallenge($method, $names, $ip, $loggedIn, $ua, $htmlNavigation, $excluded);
+$cleared = $decision->action === 'challenge' && $session !== null && $ip !== null
+    && $tokens->hasClearance($_COOKIE['botect_challenge_pass'] ?? '', $session, $ip, $ua, $origin);
+$challengeContext = null;
+if ($decision->action === 'challenge' && ! $cleared) {
+    // Invalid return targets or signing uncertainty allow the application request.
+    try {
+        $page = $botect->page($sessionCookie, $loggedIn);
+        $challengeContext = $tokens->issue($page, $ip, $ua, $origin, $uri, 'crowd');
+    } catch (\Throwable) { $decision = new \Botect\LocalChallengeDecision; }
+}
+if ($decision->action !== 'allow' && ! $cleared) {
+    $page ??= $botect->page($sessionCookie, $loggedIn);
+    if ($botect->recordPage($page, $method, (string) $path, $names,
+        $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '', observedIp: $ip)) {
+        $noStore();
+        setcookie('botect_server_session', $botect->sessionCookie($page),
+            array_replace($cookieOptions, ['expires' => time() + 30 * 86400]));
+        http_response_code(403);
+        if ($decision->action === 'block') {
+            header('Content-Type: text/plain; charset=UTF-8');
+            echo 'Forbidden';
+        } else {
+            $context = $challengeContext;
+            $nonce = bin2hex(random_bytes(18));
+            header('Content-Type: text/html; charset=UTF-8');
+            header("Content-Security-Policy: default-src 'none'; script-src 'nonce-{$nonce}'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
+            echo (new ChallengePage)->render($context + [
+                'verification_path' => $config->challengePath, 'csp_nonce' => $nonce,
+            ]);
+        }
+        $botect->logChallenge($decision->action.'_issued', 'crowd', $ip, $decision->reason, $decision->shape);
+        exit; // Deferred delivery drains after the response, including this original GET.
+    }
+}
+// Continue your application. A surrounding tracking integration must reuse $page
+// and skip a second report when the original GET was already accepted above.
+```
+
 ## Configuration reference
 
 | Setting | Plain PHP constructor argument | Laravel configuration | Default |

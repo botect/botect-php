@@ -6,6 +6,7 @@ namespace Botect\Actions;
 
 use Botect\ApiClient;
 use Botect\Configuration;
+use Botect\Contracts\EnforcementStore;
 use Botect\Contracts\VerdictCache;
 use Botect\Delivery;
 use Botect\Exceptions\DeliveryException;
@@ -16,14 +17,18 @@ final readonly class DeliverAction
     /** Older deliveries are dropped: Botect will not accept them and retrying cannot make them younger. */
     public const MAX_AGE_SECONDS = 3600;
 
-    public function __construct(private ApiClient $client, private VerdictCache $cache, private Configuration $configuration) {}
+    public function __construct(private ApiClient $client, private VerdictCache $cache, private Configuration $configuration, private ?EnforcementStore $enforcementStore = null) {}
 
     public function execute(Delivery $delivery): void
     {
         if ($delivery->createdAt < time() - self::MAX_AGE_SECONDS) {
             throw DeliveryException::expired(time() - $delivery->createdAt, self::MAX_AGE_SECONDS);
         }
-        if ($delivery->operation === Operation::RefreshVerdict) {
+        if ($delivery->operation === Operation::RefreshChallengeList) {
+            if ($this->enforcementStore !== null) {
+                (new RefreshChallengeListAction($this->configuration, $this->enforcementStore))->execute($delivery, $this->client);
+            }
+        } elseif ($delivery->operation === Operation::RefreshVerdict) {
             $loggedIn = $delivery->payload['logged_in'] ?? null;
             $verdict = $this->client->verdict($delivery->sessionToken, $delivery->payload['context'], is_bool($loggedIn) ? $loggedIn : null);
             if ($verdict->available() || $verdict->inconclusive()) {

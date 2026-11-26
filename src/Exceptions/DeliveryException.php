@@ -18,7 +18,7 @@ final class DeliveryException extends RuntimeException
      *                                    kept as the cause and summarised in the message so an error tracker shows
      *                                    a connect timeout, a read timeout and a DNS failure as different things
      */
-    public function __construct(public readonly bool $retryable, public readonly int $status = 0, ?Throwable $previous = null, ?string $message = null, array $validationFields = [])
+    public function __construct(public readonly bool $retryable, public readonly int $status = 0, ?Throwable $previous = null, ?string $message = null, array $validationFields = [], public readonly int $retryAfterSeconds = 0)
     {
         $message ??= $status === 0 ? 'Botect transport or response failure.' : 'Botect delivery returned HTTP '.$status.'.';
         if ($previous !== null && $previous->getMessage() !== '') {

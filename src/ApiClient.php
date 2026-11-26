@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Botect;
 
 use Botect\Contracts\HttpTransport;
+use Botect\Contracts\ResponseLimitAwareTransport;
 use Botect\Exceptions\DeliveryException;
 use Botect\Support\SessionToken;
 use InvalidArgumentException;
@@ -34,6 +35,51 @@ final readonly class ApiClient
             return Verdict::fromArray($data);
         } catch (Throwable $exception) {
             throw new DeliveryException(true, previous: $exception);
+        }
+    }
+
+    /** Fetch raw evidence; status classification precedes JSON decoding. */
+    public function challengeList(?string $crawlerDirectoryVersion = null): array
+    {
+        if ($this->configuration->privateKey === null) {
+            throw new DeliveryException(false);
+        }
+        $transport = $this->transport instanceof ResponseLimitAwareTransport
+            ? $this->transport->withResponseLimit(1048576) : $this->transport;
+        $query = $crawlerDirectoryVersion === null ? '' : '?'.http_build_query(['crawler_directory_version' => $crawlerDirectoryVersion], '', '&', PHP_QUERY_RFC3986);
+        try {
+            $response = $transport->send('GET', rtrim($this->configuration->apiUrl, '/').'/enforcement/challenge-list'.$query,
+                ['Accept' => 'application/json', 'Authorization' => 'Bearer '.$this->configuration->privateKey, 'User-Agent' => 'botect-sdk-php/0.1'], null);
+        } catch (DeliveryException $exception) {
+            throw $exception;
+        } catch (Throwable $exception) {
+            throw new DeliveryException(true, previous: $exception);
+        }
+        if ($response->status !== 200) {
+            throw new DeliveryException(($response->status >= 500 && $response->status <= 599) || in_array($response->status, [408, 425, 429], true), $response->status);
+        }
+        try {
+            if (strlen($response->body) > 1048576) {
+                throw new \UnexpectedValueException('Challenge list too large.');
+            }
+            $data = json_decode($response->body, false, 32, JSON_THROW_ON_ERROR);
+            if (! $data instanceof \stdClass) {
+                throw new \UnexpectedValueException('Invalid challenge list.');
+            }
+            $data = (array) $data;
+            if (is_array($data['trusted_ranges'] ?? null)) {
+                $data['trusted_ranges'] = array_map(static function ($range): array {
+                    if (! $range instanceof \stdClass) {
+                        throw new \UnexpectedValueException('Invalid trusted bounds.');
+                    }
+
+                    return (array) $range;
+                }, $data['trusted_ranges']);
+            }
+
+            return $data;
+        } catch (Throwable $exception) {
+            throw new DeliveryException(false, previous: $exception);
         }
     }
 
