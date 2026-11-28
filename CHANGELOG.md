@@ -2,6 +2,13 @@
 
 Notable changes to `botect/botect-php` are documented here. This changelog covers the PHP package; see the [Botect platform changelog](https://docs.botect.ai/changelog) for API and platform updates.
 
+## v0.3.0 — 2026-11-28
+
+### Added
+
+- Laravel `tracking.report_only` path patterns report non-GET requests through the existing delivery mode without changing responses, including JSON and errors. They override configured tracking exclusions while preserving internal exclusions and enable switches.
+- Report-only requests accept validated `X-Botect-Session` headers to attach browser sessions, with the existing cookie-based fallback. Requires backend support for non-GET reports without beacon expectations.
+
 ## v0.2.0 — 2026-11-26
 
 ### Added

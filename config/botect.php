@@ -61,6 +61,8 @@ return [
         'scope' => 'web',
         'inject_collector' => true,
         'except' => [],
+        // Report matching non-GET requests without changing their responses; overrides except.
+        'report_only' => [],
     ],
     // Enforcement is opt-in through the botect.enforce middleware alias.
     'enforcement' => [

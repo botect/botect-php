@@ -180,6 +180,167 @@ test('tracking skips JSON, HEAD, exclusions and disabled configurations', functi
     expect($this->dispatcher->deliveries)->toBe([]);
 });
 
+test('report-only POST overrides exclusions and reports JSON without changing the response', function (int $status): void {
+    config([
+        'botect.server_ingest_enabled' => true,
+        'botect.tracking.enabled' => true,
+        'botect.tracking.except' => ['song/*'],
+        'botect.tracking.report_only' => ['song/*/lyrics'],
+        'botect.logged_in.resolver' => AlwaysLoggedInResolver::class,
+    ]);
+    $original = response()->json(['lyrics' => 'example'], $status, [
+        'Cache-Control' => 'public, max-age=60',
+        'Content-Length' => '20',
+        'ETag' => 'lyrics-v1',
+        'Last-Modified' => 'Sat, 28 Nov 2026 12:00:00 GMT',
+    ])->cookie('application-cookie', 'kept');
+    $headers = $original->headers->all();
+    $body = $original->getContent();
+    Route::post('/song/example/lyrics', fn () => $original)->middleware('botect.track');
+
+    $response = $this->postJson('/song/example/lyrics', [], ['Accept-Language' => 'en-US,en;q=0.9']);
+
+    expect($response->baseResponse)->toBe($original)
+        ->and($response->getContent())->toBe($body)
+        ->and($response->headers->all())->toBe($headers)
+        ->and($response->status())->toBe($status)
+        ->and($this->transport->requests)->toBe([]);
+    $reports = $this->dispatcher->forOperation(Operation::RecordPage);
+    expect($reports)->toHaveCount(1)
+        ->and($reports[0]->payload['method'])->toBe('POST')
+        ->and($reports[0]->payload['languages'])->toBe(['en-us', 'en'])
+        ->and($reports[0]->payload['header_names'])->toContain('accept-language')
+        ->and($reports[0]->payload['path_hash'])->toBe(hash_hmac('sha256', '/song/example/lyrics', 'sk_test_secret'))
+        ->and($reports[0]->payload['logged_in'])->toBeTrue()
+        ->and($reports[0]->payload['duration_ms'])->toBeGreaterThanOrEqual(0);
+})->with([200, 403, 429, 500]);
+
+test('report-only preserves HTML and streamed responses and uses the resolved client IP', function (bool $streamed): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true, 'botect.tracking.report_only' => ['report']]);
+    $request = Request::create('/report', 'POST');
+    $request->attributes->set('botect.client_ip', '203.0.113.7');
+    $response = $streamed
+        ? response()->stream(fn () => print 'stream')
+        : response('<html><head></head><body>original</body></html>');
+    $headers = $response->headers->all();
+    $content = $response->getContent();
+
+    expect(app(TrackPage::class)->handle($request, fn () => $response))->toBe($response)
+        ->and($response->headers->all())->toBe($headers)
+        ->and($response->getContent())->toBe($content)
+        ->and($this->dispatcher->deliveries)->toHaveCount(1)
+        ->and($this->dispatcher->deliveries[0]->payload['observed_ip'])->toBe('203.0.113.7');
+})->with([false, true]);
+
+test('report-only respects internal exclusions and enable switches', function (string $path, string $disabled): void {
+    config([
+        'botect.server_ingest_enabled' => true,
+        'botect.tracking.enabled' => true,
+        'botect.tracking.report_only' => ['*'],
+        'botect.ingest_path' => '/internal/events',
+        'botect.enforcement.local_challenges.path' => '/internal/challenge',
+    ]);
+    if ($disabled !== '') {
+        config([$disabled => false]);
+    }
+    $response = response()->json(['ok' => true]);
+    expect(app(TrackPage::class)->handle(Request::create($path, 'POST'), fn () => $response))->toBe($response)
+        ->and($this->dispatcher->deliveries)->toBe([]);
+})->with([
+    ['/report', 'botect.tracking.enabled'],
+    ['/report', 'botect.server_ingest_enabled'],
+    ['/internal/events', ''],
+    ['/internal/challenge', ''],
+]);
+
+test('report-only does not change GET tracking or enable unmatched POST requests', function (): void {
+    config([
+        'botect.server_ingest_enabled' => true,
+        'botect.tracking.enabled' => true,
+        'botect.tracking.report_only' => ['song/*'],
+        'botect.tracking.except' => ['song/excluded'],
+    ]);
+    Route::get('/song/excluded', fn () => response('<html><head></head></html>'))->middleware('botect.track');
+    Route::get('/song/html', fn () => response('<html><head></head></html>'))->middleware('botect.track');
+    Route::get('/song/json', fn () => response()->json(['ok' => true]))->middleware('botect.track');
+    Route::post('/other', fn () => response()->json(['ok' => true]))->middleware('botect.track');
+    $this->get('/song/excluded')->assertDontSee('data-botect-sdk', false);
+    $this->get('/song/json')->assertOk();
+    $this->postJson('/other')->assertOk();
+    $this->get('/song/html', ['X-Botect-Session' => 'browser_session'])->assertSee('data-botect-sdk', false);
+    expect($this->dispatcher->deliveries)->toHaveCount(1)
+        ->and($this->dispatcher->deliveries[0]->sessionToken)->not->toBe('browser_session');
+});
+
+test('report-only uses valid browser session headers and falls back to cookies for invalid headers', function (?string $header, bool $valid): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true, 'botect.tracking.report_only' => ['report']]);
+    $sdk = app(Botect::class);
+    $cookiePage = $sdk->page();
+    $request = Request::create('/report', 'POST', cookies: [config('botect.cookie_name') => $sdk->sessionCookie($cookiePage)]);
+    if ($header !== null) {
+        $request->headers->set('X-Botect-Session', $header);
+    }
+    app(TrackPage::class)->handle($request, fn () => response()->json(['ok' => true]));
+    $report = $this->dispatcher->deliveries[0];
+    expect($report->sessionToken)->toBe($valid ? $header : $cookiePage->sessionToken)
+        ->and($report->payload['session_token'])->toBe($report->sessionToken)
+        ->and($report->payload['had_session_cookie'])->toBeTrue()
+        ->and($request->attributes->get('botect.session_token'))->toBe($report->sessionToken);
+})->with([
+    ['browser_session-123', true], [null, false], ['', false], ['invalid token!', false], [str_repeat('a', 129), false],
+]);
+
+test('report-only cookieless requests mint fresh sessions or reuse a valid browser header', function (?string $header): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true, 'botect.tracking.report_only' => ['report']]);
+    foreach ([1, 2] as $attempt) {
+        $request = Request::create('/report', 'POST');
+        if ($header !== null) {
+            $request->headers->set('X-Botect-Session', $header);
+        }
+        app(TrackPage::class)->handle($request, fn () => response()->json(['ok' => true]));
+    }
+    [$first, $second] = $this->dispatcher->deliveries;
+    expect($first->payload['page_id'])->not->toBe($second->payload['page_id'])
+        ->and($first->payload['had_session_cookie'])->toBeFalse()
+        ->and($second->payload['had_session_cookie'])->toBeFalse();
+    if ($header === 'browser_session') {
+        expect($first->sessionToken)->toBe($header)->and($second->sessionToken)->toBe($header);
+    } else {
+        expect($first->sessionToken)->not->toBe($second->sessionToken);
+    }
+})->with([null, 'invalid token!', 'browser_session']);
+
+test('report-only reuses an existing page and respects the duplicate report guard', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true, 'botect.tracking.report_only' => ['report']]);
+    $page = app(Botect::class)->page();
+    $request = Request::create('/report', 'POST');
+    $request->attributes->set('botect.page', $page);
+    app(TrackPage::class)->handle($request, function (Request $request) use ($page) {
+        expect($request->attributes->get('botect.page'))->toBe($page);
+        $request->attributes->set('botect.page_reported', true);
+        $request->attributes->set('botect.denied', true);
+
+        return response()->json(['denied' => true], 403);
+    });
+    expect($this->dispatcher->deliveries)->toBe([]);
+});
+
+test('report-only preserves host exceptions and fails open on reporting failures', function (): void {
+    config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true, 'botect.tracking.report_only' => ['report']]);
+    expect(fn () => app(TrackPage::class)->handle(Request::create('/report', 'POST'), fn () => throw new RuntimeException('Host failure')))
+        ->toThrow(RuntimeException::class, 'Host failure');
+    $this->app->instance(Dispatcher::class, new class implements Dispatcher
+    {
+        public function dispatch(Delivery $delivery): bool
+        {
+            throw new RuntimeException('Reporting failure');
+        }
+    });
+    $this->app->forgetInstance(Botect::class);
+    $response = response()->json(['ok' => true]);
+    expect(app(TrackPage::class)->handle(Request::create('/report', 'POST'), fn () => $response))->toBe($response);
+});
+
 test('tracking does not duplicate a manually rendered collector', function (): void {
     config(['botect.server_ingest_enabled' => true, 'botect.tracking.enabled' => true]);
     Route::get('/page', fn () => response(Blade::render('<html><head>@botect</head></html>')))->middleware('botect.track');
