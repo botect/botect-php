@@ -348,6 +348,10 @@ Then change the existing tracking settings in `config/botect.php`:
 
 With `scope` set to `web`, the provider adds tracking to the `web` middleware group and registers `POST /_botect/events`. Eligible successful HTML GET responses receive a signed HttpOnly session cookie and a collector configured to use that local endpoint. Browser forwarding and page observations use the configured delivery mode.
 
+To report non-GET requests without changing their responses, add `tracking.report_only => ['song/*/lyrics']` (default `[]`). Patterns use Laravel's request-path matching and override `tracking.except`; the ingest and challenge paths, enable switches, and middleware scope still apply. Matching requests use the normal asynchronous page-report delivery for any returned status, including JSON and error responses. Their bodies, cookies, cache headers, and validators remain untouched, and no collector is injected. The report payload does not include the response status. GET behavior is unchanged.
+
+For these reports, a valid `X-Botect-Session` header attaches the observation to that browser session. Tokens must contain 1–128 letters, digits, underscores or hyphens. An absent or invalid header falls back to the existing signed session cookie; without a valid cookie, each request gets a fresh session. Header tokens do not count as retained session cookies. This requires backend support for non-GET reports without beacon expectations.
+
 Tracking injects the collector automatically. If you render `@botect` yourself, set `tracking.inject_collector` to `false`. For automatic injection under a nonce-based CSP, supply a `csp_nonce` request attribute.
 
 Rebuild Laravel's configuration and route caches after changing the server-ingest setting, the tracking settings, or the ingest path.
